@@ -7,21 +7,6 @@ import ctypes
 import json
 import logging
 from scapy.all import ARP, Ether, IP, ICMP, srp, sendp, conf
-from mac_vendor_lookup import MacLookup, VendorNotFoundError
-
-mac_lookup = MacLookup()
-try:
-    import threading
-    threading.Thread(target=mac_lookup.update_vendors, daemon=True).start()
-except Exception as e:
-    print(f"Failed to update mac vendors: {e}")
-
-try:
-    import customtkinter as ctk
-except ImportError:
-    ctypes.windll.user32.MessageBoxW(0, "customtkinter is not installed. Please run: pip install customtkinter", "Missing Dependency", 0)
-    sys.exit(1)
-
 # Configure Appearance
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -42,7 +27,7 @@ state = {
     "gateway_ip": "",
     "subnet": "192.168.1.0/24",
     "iface": None,
-    "devices": [], # list of dicts: {'ip': str, 'mac': str, 'vendor': str}
+    "devices": [], # list of dicts: {'ip': str, 'mac': str}
     "active_attacks": {}, # dict of ip: threading.Event()
     "active_mtu_limits": {}, # dict of ip: {'event': threading.Event(), 'val': int}
     "solo_lobby_active": False,
@@ -111,20 +96,9 @@ def run_arp_scan(subnet):
         
         found_devices = []
         for s, r in ans:
-            mac = r.hwsrc
-            vendor = "Unknown"
-            try:
-                vendor = mac_lookup.lookup(mac)
-            except VendorNotFoundError:
-                pass
-            except Exception:
-                pass
-            found_devices.append({'ip': r.psrc, 'mac': mac, 'vendor': vendor})
-            
-        existing_ips = [d['ip'] for d in state["devices"]]
-        for d in found_devices:
-            if d['ip'] not in existing_ips:
-                state["devices"].append(d)
+            found_devices.append({"ip": r.psrc, "mac": r.hwsrc})
+        
+        state["devices"] = found_devices
     except Exception as e:
         print(f"[!] Scan error: {e}")
     finally:
@@ -161,9 +135,8 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
 class NetNexusApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        
-        self.title("NetNexus Desktop")
-        self.geometry("1200x700")
+        self.title("HANOI PROTOCOL // CLAN NETWORK TOOL")
+        self.geometry("900x600")
         
         self.current_sort_col = "ip"
         self.sort_desc = False
@@ -176,7 +149,7 @@ class NetNexusApp(ctk.CTk):
         self.header_frame = ctk.CTkFrame(self)
         self.header_frame.grid(row=0, column=0, padx=20, pady=20, sticky="ew")
         
-        self.title_lbl = ctk.CTkLabel(self.header_frame, text="NetNexus", font=ctk.CTkFont(size=24, weight="bold"), text_color="#3b82f6")
+        self.title_lbl = ctk.CTkLabel(self.header_frame, text="HANOI PROTOCOL", font=ctk.CTkFont(family="Orbitron", size=24, weight="bold"), text_color="#00ffd1")
         self.title_lbl.grid(row=0, column=0, padx=20, pady=15)
         
         self.subnet_var = ctk.StringVar(value=state["subnet"])
@@ -316,7 +289,7 @@ class NetNexusApp(ctk.CTk):
         
         if not state["devices"] and not state["scanning"]:
             lbl = ctk.CTkLabel(self.table_frame, text="No devices found. Run a scan.", text_color="gray")
-            lbl.grid(row=1, column=0, columnspan=7, pady=20)
+            lbl.grid(row=1, column=0, columnspan=6, pady=20)
             self.device_rows.append([lbl])
             return
 
@@ -328,7 +301,6 @@ class NetNexusApp(ctk.CTk):
             if not search_q or \
                search_q in dev["ip"].lower() or \
                search_q in dev["mac"].lower() or \
-               search_q in dev["vendor"].lower() or \
                search_q in nick:
                 filtered_devices.append(dev)
 
@@ -345,36 +317,33 @@ class NetNexusApp(ctk.CTk):
         sorted_devices = sorted(filtered_devices, key=sort_key, reverse=self.sort_desc)
 
         for r_idx, dev in enumerate(sorted_devices, start=1):
-            ip_lbl = ctk.CTkLabel(self.table_frame, text=dev["ip"])
+            ip_lbl = ctk.CTkLabel(self.table_frame, text=dev["ip"], font=("Share Tech Mono", 13))
             ip_lbl.grid(row=r_idx, column=0, padx=5, pady=5, sticky="w")
             
-            mac_lbl = ctk.CTkLabel(self.table_frame, text=dev["mac"])
+            mac_lbl = ctk.CTkLabel(self.table_frame, text=dev["mac"], font=("Share Tech Mono", 12), text_color="gray")
             mac_lbl.grid(row=r_idx, column=1, padx=5, pady=5, sticky="w")
-            
-            vendor_lbl = ctk.CTkLabel(self.table_frame, text=dev["vendor"])
-            vendor_lbl.grid(row=r_idx, column=2, padx=5, pady=5, sticky="w")
             
             # Nickname Entry
             nick_var = ctk.StringVar(value=state["nicknames"].get(dev["mac"], ""))
             nick_entry = ctk.CTkEntry(self.table_frame, textvariable=nick_var, width=150)
-            nick_entry.grid(row=r_idx, column=3, padx=5, pady=5, sticky="w")
+            nick_entry.grid(row=r_idx, column=2, padx=5, pady=5, sticky="w")
             nick_var.trace_add("write", lambda name, index, mode, m=dev["mac"], v=nick_var: self.update_nickname_var(m, v))
             
             # Status Badge
             is_cut = dev["ip"] in state["active_attacks"] or state["solo_lobby_active"]
-            status_text = "Disconnected" if is_cut else "Connected"
-            status_color = "#ef4444" if is_cut else "#10b981"
+            status_text = "OFFLINE" if is_cut else "ONLINE"
+            status_color = "#ff003c" if is_cut else "#00ffd1"
             
             is_mtu = dev["ip"] in state["active_mtu_limits"]
             if is_mtu:
                 status_text += f"\nMTU: {state['active_mtu_limits'][dev['ip']]['val']}"
                 
-            status_lbl = ctk.CTkLabel(self.table_frame, text=status_text, text_color=status_color)
-            status_lbl.grid(row=r_idx, column=4, padx=5, pady=5, sticky="w")
+            status_lbl = ctk.CTkLabel(self.table_frame, text=status_text, text_color=status_color, font=("Rajdhani", 12, "bold"))
+            status_lbl.grid(row=r_idx, column=3, padx=5, pady=5, sticky="w")
             
-            # Action Frame for compact buttons
+            # Action Frame
             action_frame = ctk.CTkFrame(self.table_frame, fg_color="transparent")
-            action_frame.grid(row=r_idx, column=5, padx=5, pady=5, sticky="w")
+            action_frame.grid(row=r_idx, column=4, padx=5, pady=5, sticky="w")
             
             # Top: Cut Connection
             cut_text = "Restore" if is_cut else "Cut Connection"
@@ -400,11 +369,11 @@ class NetNexusApp(ctk.CTk):
             time_entry = ctk.CTkEntry(action_frame, textvariable=time_var, width=60)
             time_entry.grid(row=2, column=0, padx=2, pady=2, sticky="w")
             
-            solo_btn = ctk.CTkButton(action_frame, text="Solo Lobby", width=80, fg_color="#4f46e5",
+            solo_btn = ctk.CTkButton(action_frame, text="GHOST", width=80, fg_color="#4f46e5",
                 command=lambda ip=dev["ip"], tv=time_var: self.trigger_solo_lobby(ip, tv))
             solo_btn.grid(row=2, column=1, padx=2, pady=2, sticky="w")
             
-            self.device_rows.append([ip_lbl, mac_lbl, vendor_lbl, nick_entry, status_lbl, action_frame, cut_btn, solo_btn])
+            self.device_rows.append([ip_lbl, mac_lbl, nick_entry, status_lbl, action_frame, cut_btn, solo_btn])
 
     def update_ui(self):
         # Update Scan button
@@ -428,14 +397,14 @@ class NetNexusApp(ctk.CTk):
         filtered_devices = []
         for dev in state["devices"]:
             nick = state["nicknames"].get(dev["mac"], "").lower()
-            if not search_q or search_q in dev["ip"].lower() or search_q in dev["mac"].lower() or search_q in dev["vendor"].lower() or search_q in nick:
+            if not search_q or search_q in dev["ip"].lower() or search_q in dev["mac"].lower() or search_q in nick:
                 filtered_devices.append(dev)
                 
         sorted_devices = sorted(filtered_devices, key=lambda d: tuple(int(p) for p in d["ip"].split('.')) if self.current_sort_col == "ip" else d.get(self.current_sort_col, "").lower(), reverse=self.sort_desc)
         
         for r_idx, dev in enumerate(sorted_devices):
-            if r_idx < len(self.device_rows) and len(self.device_rows[r_idx]) == 8:
-                solo_btn = self.device_rows[r_idx][7]
+                if r_idx < len(self.device_rows) and len(self.device_rows[r_idx]) == 7:
+                    solo_btn = self.device_rows[r_idx][6]
                 if state["solo_lobby_active"]:
                     solo_btn.configure(state="disabled")
                 else:
@@ -448,8 +417,8 @@ class NetNexusApp(ctk.CTk):
                 if is_mtu:
                     status_text += f"\nMTU: {state['active_mtu_limits'][dev['ip']]['val']}"
                     
-                status_color = "#ef4444" if is_cut else "#10b981"
-                status_lbl = self.device_rows[r_idx][4]
+                status_color = "#ff003c" if is_cut else "#00ffd1"
+                status_lbl = self.device_rows[r_idx][3]
                 status_lbl.configure(text=status_text, text_color=status_color)
 
         self.after(100, self.update_ui)

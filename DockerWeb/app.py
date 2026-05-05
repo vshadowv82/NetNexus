@@ -7,15 +7,6 @@ import json
 import logging
 from scapy.all import ARP, Ether, IP, ICMP, srp, sendp, conf
 from flask import Flask, jsonify, request, render_template_string
-from mac_vendor_lookup import MacLookup, VendorNotFoundError
-
-mac_lookup = MacLookup()
-try:
-    # Attempt to download the latest OUI database in the background
-    threading.Thread(target=mac_lookup.update_vendors, daemon=True).start()
-except Exception as e:
-    print(f"Failed to update mac vendors: {e}")
-
 # Disable Flask startup logging
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
@@ -28,7 +19,7 @@ state = {
     "gateway_ip": "",
     "subnet": "192.168.1.0/24",
     "iface": None,
-    "devices": [], # list of dicts: {'ip': str, 'mac': str, 'vendor': str}
+    "devices": [], # list of dicts: {'ip': str, 'mac': str}
     "active_attacks": {}, # dict of ip: threading.Event()
     "active_mtu_limits": {}, # dict of ip: {'event': threading.Event(), 'val': int}
     "solo_lobby_active": False,
@@ -154,20 +145,9 @@ def run_arp_scan(subnet):
         ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=subnet), iface=state["iface"], timeout=5, retry=1, verbose=0)
         found_devices = []
         for s, r in ans:
-            mac = r.hwsrc
-            vendor = "Unknown"
-            try:
-                vendor = mac_lookup.lookup(mac)
-            except VendorNotFoundError:
-                pass
-            except Exception:
-                pass
-            found_devices.append({'ip': r.psrc, 'mac': mac, 'vendor': vendor})
-            
-        existing_ips = [d['ip'] for d in state["devices"]]
-        for d in found_devices:
-            if d['ip'] not in existing_ips:
-                state["devices"].append(d)
+            found_devices.append({"ip": r.psrc, "mac": r.hwsrc})
+        
+        state["devices"] = found_devices
     except Exception as e:
         print(f"[!] Scan error: {e}")
     finally:
@@ -214,7 +194,6 @@ def api_status():
         devices_enriched.append({
             "ip": d["ip"],
             "mac": d["mac"],
-            "vendor": d.get("vendor", "Unknown"),
             "nickname": state["nicknames"].get(d["mac"], ""),
             "is_cut": d["ip"] in state["active_attacks"],
             "mtu_limit": mtu_limit
@@ -391,6 +370,13 @@ HTML_TEMPLATE = """
         .corner::before,.corner::after { content:''; position:absolute; width:8px; height:8px; border-color:var(--cyan); border-style:solid; opacity:.5; }
         .corner::before { top:0; left:0; border-width:1px 0 0 1px; }
         .corner::after  { bottom:0; right:0; border-width:0 1px 1px 0; }
+        @media (max-width: 768px) {
+            .device-row { display:flex !important; flex-direction:column; gap:14px; padding:18px 16px !important; }
+            .mobile-label { display:block !important; }
+            #desktop-header { display:none !important; }
+            .action-col { align-items:stretch !important; }
+            .action-col button, .action-col > div { width:100% !important; }
+        }
     </style>
 </head>
 <body style="margin:0;padding:0">
@@ -450,7 +436,6 @@ HTML_TEMPLATE = """
                 <select id="mobile-sort" onchange="setSort(this.value)" class="hp-input" style="margin:0;">
                     <option value="ip">IP Address</option>
                     <option value="mac">MAC Address</option>
-                    <option value="vendor">Vendor</option>
                     <option value="nickname">Nickname</option>
                     <option value="is_cut">Status</option>
                 </select>
@@ -459,10 +444,9 @@ HTML_TEMPLATE = """
             <!-- Device Table -->
             <div class="card" style="overflow:hidden;">
                 <!-- Desktop Header -->
-                <div style="display:grid;grid-template-columns:repeat(6,1fr);border-bottom:1px solid rgba(0,255,209,0.12);background:rgba(0,0,0,0.4);" id="desktop-header">
+                <div style="display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid rgba(0,255,209,0.12);background:rgba(0,0,0,0.4);" id="desktop-header">
                     <div class="sort-th" onclick="setSort('ip')">IP ADDRESS <span id="sort-ip"></span></div>
                     <div class="sort-th" onclick="setSort('mac')">MAC <span id="sort-mac"></span></div>
-                    <div class="sort-th" onclick="setSort('vendor')">VENDOR <span id="sort-vendor"></span></div>
                     <div class="sort-th" onclick="setSort('nickname')">NICKNAME <span id="sort-nickname"></span></div>
                     <div class="sort-th" onclick="setSort('is_cut')">STATUS <span id="sort-is_cut"></span></div>
                     <div class="sort-th" style="text-align:right;">ACTIONS</div>
@@ -501,7 +485,7 @@ HTML_TEMPLATE = """
         }
         
         function updateSortIcons() {
-            const cols = ['ip', 'mac', 'vendor', 'nickname', 'is_cut'];
+            const cols = ['ip', 'mac', 'nickname', 'is_cut'];
             cols.forEach(c => {
                 const el = document.getElementById('sort-' + c);
                 if (el) {
@@ -576,7 +560,6 @@ HTML_TEMPLATE = """
                         const nick = pendingNicknames[d.mac] !== undefined ? pendingNicknames[d.mac] : d.nickname;
                         return (d.ip && d.ip.toLowerCase().includes(searchQ)) ||
                                (d.mac && d.mac.toLowerCase().includes(searchQ)) ||
-                               (d.vendor && d.vendor.toLowerCase().includes(searchQ)) ||
                                (nick && nick.toLowerCase().includes(searchQ));
                     });
                 }
@@ -623,18 +606,17 @@ HTML_TEMPLATE = """
                 const actionMtuClass = isMtuActive ? 'btn btn-cyan' : 'btn btn-gold';
 
                 html += `
-                <div style="border-bottom:1px solid rgba(0,255,209,0.07);padding:14px 16px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px;align-items:center;transition:background .15s;" onmouseover="this.style.background='rgba(0,255,209,0.03)'" onmouseout="this.style.background=''">
+                <div class="device-row" style="border-bottom:1px solid rgba(0,255,209,0.07);padding:14px 16px;display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:center;transition:background .15s;" onmouseover="this.style.background='rgba(0,255,209,0.03)'" onmouseout="this.style.background=''">
                     <div>
-                        <div style="font-size:.6rem;color:#556677;letter-spacing:.15em;margin-bottom:2px;display:none;" class="mobile-label">IP ADDRESS</div>
+                        <div class="mobile-label" style="display:none;font-size:.6rem;color:#556677;letter-spacing:.15em;margin-bottom:4px;">IP ADDRESS</div>
                         <div class="mono neon-cyan" style="font-size:.95rem;font-weight:700;">${dev.ip}</div>
                     </div>
                     <div>
+                        <div class="mobile-label" style="display:none;font-size:.6rem;color:#556677;letter-spacing:.15em;margin-bottom:4px;">MAC ADDRESS</div>
                         <div class="mono" style="font-size:.75rem;color:#667788;">${dev.mac}</div>
                     </div>
                     <div>
-                        <div style="font-size:.8rem;color:#8899aa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${dev.vendor}">${dev.vendor}</div>
-                    </div>
-                    <div>
+                        <div class="mobile-label" style="display:none;font-size:.6rem;color:#556677;letter-spacing:.15em;margin-bottom:4px;">NICKNAME</div>
                         <input type="text" id="nick-${dev.mac}" class="hp-input hp-input-sm"
                             placeholder="// alias..."
                             value="${currentNick}"
@@ -642,8 +624,11 @@ HTML_TEMPLATE = """
                             onblur="focusedInputId = null; pendingNicknames['${dev.mac}'] = undefined; updateNickname('${dev.mac}', this.value)"
                             oninput="pendingNicknames['${dev.mac}'] = this.value">
                     </div>
-                    <div>${statusBadge}</div>
-                    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+                    <div>
+                        <div class="mobile-label" style="display:none;font-size:.6rem;color:#556677;letter-spacing:.15em;margin-bottom:4px;">STATUS</div>
+                        ${statusBadge}
+                    </div>
+                    <div class="action-col" style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
                         <button onclick="toggleCut('${dev.ip}')" class="${actionCutClass}" style="width:100%;text-align:center;">${actionCutText}</button>
                         <div style="display:flex;gap:6px;width:100%;">
                             <input type="number" id="mtu-${dev.ip}" class="hp-input hp-input-sm" style="width:60px;text-align:center;"
