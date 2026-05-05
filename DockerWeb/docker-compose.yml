@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  netnexus:
+    build: .
+    container_name: netnexus
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
