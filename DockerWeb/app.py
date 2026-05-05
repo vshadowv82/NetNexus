@@ -145,7 +145,8 @@ def run_arp_scan(subnet):
         ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=subnet), iface=state["iface"], timeout=5, retry=1, verbose=0)
         found_devices = []
         for s, r in ans:
-            found_devices.append({"ip": r.psrc, "mac": r.hwsrc})
+            if r.psrc != state["gateway_ip"]:
+                found_devices.append({"ip": r.psrc, "mac": r.hwsrc})
         
         state["devices"] = found_devices
     except Exception as e:

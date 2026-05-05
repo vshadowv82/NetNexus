@@ -96,7 +96,8 @@ def run_arp_scan(subnet):
         
         found_devices = []
         for s, r in ans:
-            found_devices.append({"ip": r.psrc, "mac": r.hwsrc})
+            if r.psrc != state["gateway_ip"]:
+                found_devices.append({"ip": r.psrc, "mac": r.hwsrc})
         
         state["devices"] = found_devices
     except Exception as e:
