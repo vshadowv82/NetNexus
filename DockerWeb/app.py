@@ -318,48 +318,136 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>NetNexus Dashboard</title>
+    <title>HANOI PROTOCOL // CLAN NETWORK TOOL</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --bg: #07070f;
+            --bg2: #0c0c1a;
+            --bg3: #10101e;
+            --cyan: #00ffd1;
+            --red: #ff003c;
+            --gold: #ffc400;
+            --text: #c8d8e8;
+            --dim: #556677;
+            --cyan-glow: rgba(0,255,209,0.18);
+            --red-glow: rgba(255,0,60,0.18);
+        }
+        * { box-sizing: border-box; }
+        body {
+            background-color: var(--bg);
+            background-image:
+                linear-gradient(rgba(0,255,209,0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,255,209,0.025) 1px, transparent 1px);
+            background-size: 44px 44px;
+            font-family: 'Rajdhani', sans-serif;
+            color: var(--text);
+            min-height: 100vh;
+        }
+        body::after {
+            content:''; position:fixed; inset:0; pointer-events:none; z-index:9999;
+            background: repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.08) 3px,rgba(0,0,0,0.08) 4px);
+        }
+        .mono { font-family: 'Share Tech Mono', monospace; }
+        .orb  { font-family: 'Orbitron', sans-serif; }
+        .card {
+            background: var(--bg3);
+            border: 1px solid rgba(0,255,209,0.15);
+            box-shadow: 0 0 18px rgba(0,255,209,0.05), inset 0 0 30px rgba(0,0,0,0.4);
+            transition: border-color .2s, box-shadow .2s;
+        }
+        .card:hover { border-color: rgba(0,255,209,0.35); box-shadow: 0 0 28px rgba(0,255,209,0.12); }
+        .neon-cyan  { color: var(--cyan); text-shadow: 0 0 10px var(--cyan); }
+        .neon-red   { color: var(--red);  text-shadow: 0 0 10px var(--red); }
+        .neon-gold  { color: var(--gold); text-shadow: 0 0 8px var(--gold); }
+        .badge { display:block; text-align:center; padding:6px 10px; border-radius:4px; font-weight:700; letter-spacing:.08em; font-size:.75rem; }
+        .badge-green { background:rgba(0,255,150,0.08); color:#00ff96; border:1px solid rgba(0,255,150,0.25); }
+        .badge-red   { background:rgba(255,0,60,0.1);   color:#ff003c; border:1px solid rgba(255,0,60,0.3);   box-shadow:0 0 8px rgba(255,0,60,0.2); }
+        .badge-cyan  { background:rgba(0,255,209,0.08); color:#00ffd1; border:1px solid rgba(0,255,209,0.4);   box-shadow:0 0 10px rgba(0,255,209,0.25); animation:pulse-cyan 1.4s ease-in-out infinite; }
+        .badge-gold  { background:rgba(255,196,0,0.08); color:#ffc400; border:1px solid rgba(255,196,0,0.3); }
+        @keyframes pulse-cyan { 0%,100%{box-shadow:0 0 8px rgba(0,255,209,0.3)} 50%{box-shadow:0 0 20px rgba(0,255,209,0.7)} }
+        .btn { font-family:'Rajdhani',sans-serif; font-weight:700; letter-spacing:.06em; border-radius:3px; cursor:pointer; transition:all .15s; text-transform:uppercase; font-size:.8rem; }
+        .btn-red   { background:transparent; color:var(--red);  border:1px solid var(--red);  padding:8px 14px; }
+        .btn-red:hover   { background:rgba(255,0,60,0.15);   box-shadow:0 0 12px rgba(255,0,60,0.4); }
+        .btn-cyan  { background:transparent; color:var(--cyan); border:1px solid var(--cyan); padding:8px 14px; }
+        .btn-cyan:hover  { background:rgba(0,255,209,0.1);   box-shadow:0 0 12px rgba(0,255,209,0.4); }
+        .btn-gold  { background:transparent; color:var(--gold); border:1px solid var(--gold); padding:8px 14px; }
+        .btn-gold:hover  { background:rgba(255,196,0,0.1);   box-shadow:0 0 12px rgba(255,196,0,0.4); }
+        .btn-blue  { background:transparent; color:#7b8fff;     border:1px solid #7b8fff;     padding:8px 14px; }
+        .btn-blue:hover  { background:rgba(123,143,255,0.1);  box-shadow:0 0 12px rgba(123,143,255,0.4); }
+        .btn:disabled { opacity:.35; cursor:not-allowed; box-shadow:none; }
+        .hp-input {
+            background:rgba(0,0,0,0.5); border:1px solid rgba(0,255,209,0.2); color:var(--cyan);
+            font-family:'Share Tech Mono',monospace; border-radius:3px; padding:8px 10px; width:100%;
+            font-size:.85rem; outline:none; transition:border-color .2s;
+        }
+        .hp-input:focus { border-color:var(--cyan); box-shadow:0 0 8px rgba(0,255,209,0.3); }
+        .hp-input-sm { padding:6px 8px; font-size:.78rem; }
+        .sort-th { cursor:pointer; font-family:'Rajdhani',sans-serif; font-weight:600; letter-spacing:.1em; font-size:.7rem; text-transform:uppercase; color:var(--dim); transition:color .15s; padding:12px 16px; }
+        .sort-th:hover { color:var(--cyan); }
+        label.hp-label { font-size:.65rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); display:block; margin-bottom:4px; }
+        .corner::before,.corner::after { content:''; position:absolute; width:8px; height:8px; border-color:var(--cyan); border-style:solid; opacity:.5; }
+        .corner::before { top:0; left:0; border-width:1px 0 0 1px; }
+        .corner::after  { bottom:0; right:0; border-width:0 1px 1px 0; }
+    </style>
 </head>
-<body class="bg-gray-900 text-gray-200 font-sans min-h-screen flex flex-col">
+<body style="margin:0;padding:0">
 
     <!-- Header -->
-    <header class="bg-gray-800 border-b border-gray-700 shadow-lg p-4 flex justify-between items-center sticky top-0 z-50">
-        <div class="flex items-center space-x-3">
-            <div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
-                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+    <header style="background:rgba(7,7,15,0.97);border-bottom:1px solid rgba(0,255,209,0.2);box-shadow:0 0 30px rgba(0,255,209,0.08);padding:12px 24px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:50;backdrop-filter:blur(10px);">
+        <div style="display:flex;align-items:center;gap:16px;">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+                <polygon points="18,2 34,10 34,26 18,34 2,26 2,10" stroke="#00ffd1" stroke-width="1.5" fill="rgba(0,255,209,0.05)"/>
+                <polygon points="18,8 28,13 28,23 18,28 8,23 8,13" stroke="#ff003c" stroke-width="1" fill="rgba(255,0,60,0.05)"/>
+                <circle cx="18" cy="18" r="4" fill="#00ffd1" opacity="0.9"/>
+                <line x1="18" y1="2" x2="18" y2="8" stroke="#00ffd1" stroke-width="1"/>
+                <line x1="18" y1="28" x2="18" y2="34" stroke="#00ffd1" stroke-width="1"/>
+                <line x1="2" y1="10" x2="8" y2="13" stroke="#00ffd1" stroke-width="1"/>
+                <line x1="28" y1="23" x2="34" y2="26" stroke="#00ffd1" stroke-width="1"/>
+                <line x1="34" y1="10" x2="28" y2="13" stroke="#00ffd1" stroke-width="1"/>
+                <line x1="8" y1="23" x2="2" y2="26" stroke="#00ffd1" stroke-width="1"/>
+            </svg>
+            <div>
+                <div class="orb" style="font-size:1.1rem;font-weight:900;letter-spacing:.15em;color:#00ffd1;text-shadow:0 0 16px #00ffd1;">HANOI<span style="color:#ff003c;text-shadow:0 0 16px #ff003c;"> PROTOCOL</span></div>
+                <div style="font-size:.6rem;letter-spacing:.25em;color:#556677;font-family:'Share Tech Mono',monospace;">CLAN NETWORK OPERATIONS // v2.0</div>
             </div>
-            <h1 class="text-xl font-bold text-white tracking-wide">NetNexus<span class="text-blue-400">Web</span></h1>
+        </div>
+        <div style="font-family:'Share Tech Mono',monospace;font-size:.65rem;color:#556677;text-align:right;">
+            <div style="color:#00ffd1;" id="hdr-time"></div>
+            <div>HANOI // ONLINE</div>
         </div>
     </header>
 
     <!-- Main Content -->
-    <main class="flex-grow p-4 md:p-6 max-w-7xl mx-auto w-full">
+    <main style="flex:1;padding:20px 24px;max-width:1600px;margin:0 auto;width:100%;">
 
-        <div id="view-network" class="space-y-6 block">
-            <div class="bg-gray-800 p-4 md:p-6 rounded-xl md:rounded-lg shadow-md border border-gray-700 flex flex-col md:flex-row md:flex-wrap gap-4 md:items-end">
-                <div class="w-full md:w-auto">
-                    <label class="block text-xs font-semibold text-gray-400 mb-1 uppercase">Subnet</label>
-                    <input type="text" id="inp-subnet" class="bg-gray-900 border border-gray-600 text-white text-sm rounded-lg md:rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-3 md:p-2.5" placeholder="192.168.1.0/24">
+        <div id="view-network" style="display:flex;flex-direction:column;gap:20px;">
+            <!-- Control Panel -->
+            <div class="card relative corner" style="padding:20px 24px;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;">
+                <div style="flex:1;min-width:140px;">
+                    <label class="hp-label">Subnet</label>
+                    <input type="text" id="inp-subnet" class="hp-input" placeholder="192.168.1.0/24">
                 </div>
-                <div class="w-full md:w-auto">
-                    <label class="block text-xs font-semibold text-gray-400 mb-1 uppercase">Gateway Router</label>
-                    <input type="text" id="inp-gateway" class="bg-gray-900 border border-gray-600 text-white text-sm rounded-lg md:rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-3 md:p-2.5" placeholder="192.168.1.1">
+                <div style="flex:1;min-width:140px;">
+                    <label class="hp-label">Gateway</label>
+                    <input type="text" id="inp-gateway" class="hp-input" placeholder="192.168.1.1">
                 </div>
-                <button id="btn-scan" onclick="triggerScan()" class="w-full md:w-auto bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 md:py-2.5 px-6 rounded-lg md:rounded-md transition shadow-lg flex items-center justify-center">
-                    <svg id="icon-scan" class="w-5 h-5 md:w-4 md:h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                    <span id="text-scan">Scan Network</span>
+                <div style="flex:2;min-width:200px;">
+                    <label class="hp-label">Search Devices</label>
+                    <input type="text" id="inp-search" class="hp-input" placeholder="Search IP, MAC, Nickname, Vendor..." oninput="fetchStatus()">
+                </div>
+                <button id="btn-scan" onclick="triggerScan()" class="btn btn-cyan" style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
+                    <svg id="icon-scan" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    <span id="text-scan">SCAN NETWORK</span>
                 </button>
-                <div class="w-full md:w-auto md:ml-auto">
-                    <label class="block text-xs font-semibold text-gray-400 mb-1 uppercase">Search Devices</label>
-                    <input type="text" id="inp-search" class="bg-gray-900 border border-gray-600 text-white text-sm rounded-lg md:rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-3 md:p-2.5" placeholder="Search IP, Mac, Nick..." oninput="fetchStatus()">
-                </div>
             </div>
 
-            <!-- Mobile Sort Dropdown -->
-            <div class="md:hidden bg-gray-800 p-4 rounded-xl shadow-md border border-gray-700 flex items-center justify-between">
-                <label class="text-sm font-semibold text-gray-400 uppercase">Sort By:</label>
-                <select id="mobile-sort" onchange="setSort(this.value)" class="bg-gray-900 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-3 ml-4 flex-grow">
+            <!-- Mobile Sort -->
+            <div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:12px;" id="mobile-sort-bar">
+                <label class="hp-label" style="margin:0;white-space:nowrap;">SORT BY</label>
+                <select id="mobile-sort" onchange="setSort(this.value)" class="hp-input" style="margin:0;">
                     <option value="ip">IP Address</option>
                     <option value="mac">MAC Address</option>
                     <option value="vendor">Vendor</option>
@@ -368,20 +456,19 @@ HTML_TEMPLATE = """
                 </select>
             </div>
 
-            <div class="md:bg-gray-800 md:rounded-lg md:shadow-md md:border md:border-gray-700">
+            <!-- Device Table -->
+            <div class="card" style="overflow:hidden;">
                 <!-- Desktop Header -->
-                <div class="hidden md:grid grid-cols-6 gap-4 p-4 text-xs font-semibold text-gray-400 uppercase border-b border-gray-700 bg-gray-900 rounded-t-lg">
-                    <div class="cursor-pointer hover:text-white" onclick="setSort('ip')">IP Address <span id="sort-ip"></span></div>
-                    <div class="cursor-pointer hover:text-white" onclick="setSort('mac')">MAC Address <span id="sort-mac"></span></div>
-                    <div class="cursor-pointer hover:text-white" onclick="setSort('vendor')">Vendor <span id="sort-vendor"></span></div>
-                    <div class="cursor-pointer hover:text-white" onclick="setSort('nickname')">Nickname <span id="sort-nickname"></span></div>
-                    <div class="cursor-pointer hover:text-white" onclick="setSort('is_cut')">Status <span id="sort-is_cut"></span></div>
-                    <div class="text-right">Actions</div>
+                <div style="display:grid;grid-template-columns:repeat(6,1fr);border-bottom:1px solid rgba(0,255,209,0.12);background:rgba(0,0,0,0.4);" id="desktop-header">
+                    <div class="sort-th" onclick="setSort('ip')">IP ADDRESS <span id="sort-ip"></span></div>
+                    <div class="sort-th" onclick="setSort('mac')">MAC <span id="sort-mac"></span></div>
+                    <div class="sort-th" onclick="setSort('vendor')">VENDOR <span id="sort-vendor"></span></div>
+                    <div class="sort-th" onclick="setSort('nickname')">NICKNAME <span id="sort-nickname"></span></div>
+                    <div class="sort-th" onclick="setSort('is_cut')">STATUS <span id="sort-is_cut"></span></div>
+                    <div class="sort-th" style="text-align:right;">ACTIONS</div>
                 </div>
-                
-                <!-- Devices Body -->
-                <div id="device-table-body" class="flex flex-col gap-4 md:block md:gap-0">
-                    <div class="p-6 text-center text-gray-500">Run a scan to find devices.</div>
+                <div id="device-table-body" style="display:flex;flex-direction:column;gap:0;">
+                    <div style="padding:40px;text-align:center;color:#556677;font-family:'Share Tech Mono',monospace;font-size:.85rem;">// RUN A SCAN TO ENUMERATE NETWORK DEVICES</div>
                 </div>
             </div>
         </div>
@@ -395,6 +482,12 @@ HTML_TEMPLATE = """
         
         let currentSortCol = 'ip';
         let sortDesc = false;
+
+        setInterval(() => {
+            const now = new Date();
+            const el = document.getElementById('hdr-time');
+            if (el) el.innerText = now.toLocaleTimeString('en-US', {hour12: false});
+        }, 1000);
 
         function setSort(col) {
             if (currentSortCol === col) {
@@ -441,15 +534,15 @@ HTML_TEMPLATE = """
                 const textScan = document.getElementById('text-scan');
                 const iconScan = document.getElementById('icon-scan');
                 if (data.scanning) {
-                    btnScan.classList.replace('bg-blue-600', 'bg-gray-600');
+                    btnScan.style.color='#556677'; btnScan.style.borderColor='#556677'; btnScan.style.boxShadow='none';
                     btnScan.disabled = true;
-                    textScan.innerText = "Scanning...";
-                    iconScan.classList.add('animate-spin');
+                    textScan.innerText = "SCANNING...";
+                    iconScan.style.animation = 'spin 1s linear infinite';
                 } else {
-                    btnScan.classList.replace('bg-gray-600', 'bg-blue-600');
+                    btnScan.style.color=''; btnScan.style.borderColor=''; btnScan.style.boxShadow='';
                     btnScan.disabled = false;
-                    textScan.innerText = "Scan Network";
-                    iconScan.classList.remove('animate-spin');
+                    textScan.innerText = "SCAN NETWORK";
+                    iconScan.style.animation = '';
                 }
 
                 // Sort devices
@@ -499,7 +592,7 @@ HTML_TEMPLATE = """
             const tbody = document.getElementById('device-table-body');
             if (devices.length === 0) {
                 if(!document.getElementById('btn-scan').disabled) {
-                    tbody.innerHTML = '<div class="p-6 text-center text-gray-500">No devices found.</div>';
+                    tbody.innerHTML = '<div style="padding:40px;text-align:center;color:#556677;font-family:\'Share Tech Mono\',monospace;font-size:.85rem;">// NO DEVICES FOUND — RETRY SCAN</div>';
                 }
                 return;
             }
@@ -507,99 +600,71 @@ HTML_TEMPLATE = """
             let html = '';
             devices.forEach((dev, index) => {
                 const is_cut = dev.is_cut || globalData.solo_lobby_active;
-                
+
                 let statusBadge = '';
                 if (globalData.solo_lobby_active && globalData.solo_lobby_target === dev.ip) {
-                    statusBadge += `<span class="bg-indigo-500/20 text-indigo-400 text-sm md:text-xs font-black px-3 py-2 md:py-1 rounded-lg md:rounded border border-indigo-500/50 block text-center mb-1 animate-pulse shadow-[0_0_10px_rgba(99,102,241,0.5)]">SOLO LOBBY: ${globalData.solo_lobby_timer.toFixed(1)}s</span>`;
+                    statusBadge = `<span class="badge badge-cyan">◈ SOLO LOBBY: ${globalData.solo_lobby_timer.toFixed(1)}s</span>`;
                 } else if (is_cut) {
-                    statusBadge += '<span class="bg-red-500/20 text-red-400 text-sm md:text-xs font-bold px-2.5 py-2 md:py-1 rounded-lg md:rounded border border-red-500/20 block text-center mb-1">Disconnected</span>';
+                    statusBadge = '<span class="badge badge-red">✕ OFFLINE</span>';
                 } else {
-                    statusBadge += '<span class="bg-emerald-500/20 text-emerald-400 text-sm md:text-xs font-bold px-2.5 py-2 md:py-1 rounded-lg md:rounded border border-emerald-500/20 block text-center mb-1">Connected</span>';
+                    statusBadge = '<span class="badge badge-green">◉ ONLINE</span>';
                 }
-                
                 if (dev.mtu_limit !== null) {
-                    statusBadge += `<span class="bg-yellow-500/20 text-yellow-400 text-sm md:text-xs font-bold px-2.5 py-2 md:py-1 rounded-lg md:rounded border border-yellow-500/20 block text-center mt-1">MTU: ${dev.mtu_limit}</span>`;
+                    statusBadge += `<span class="badge badge-gold" style="margin-top:6px;">⊘ MTU: ${dev.mtu_limit}</span>`;
                 }
 
-                const actionCutText = dev.is_cut ? 'Restore' : 'Cut Connection';
-                const actionCutColor = dev.is_cut ? 'bg-gray-600 hover:bg-gray-500' : 'bg-red-600 hover:bg-red-500';
-                
+                const actionCutText = dev.is_cut ? 'RESTORE' : 'CUT CONN';
+                const actionCutClass = dev.is_cut ? 'btn btn-cyan' : 'btn btn-red';
                 const currentNick = pendingNicknames[dev.mac] !== undefined ? pendingNicknames[dev.mac] : dev.nickname;
                 const currentTime = pendingTimes[dev.ip] !== undefined ? pendingTimes[dev.ip] : "8000";
-                
                 const isMtuActive = dev.mtu_limit !== null;
                 const currentMtuVal = pendingMtu[dev.ip] !== undefined ? pendingMtu[dev.ip] : (isMtuActive ? dev.mtu_limit : "800");
-                const actionMtuColor = isMtuActive ? 'bg-orange-600 hover:bg-orange-500' : 'bg-yellow-600 hover:bg-yellow-500 text-gray-900';
-                const actionMtuText = isMtuActive ? 'Stop MTU' : 'Limit MTU';
+                const actionMtuText = isMtuActive ? 'STOP MTU' : 'LIMIT MTU';
+                const actionMtuClass = isMtuActive ? 'btn btn-cyan' : 'btn btn-gold';
 
                 html += `
-                <div class="bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 md:border-0 md:border-b md:rounded-none md:shadow-none md:p-4 hover:bg-gray-750 transition md:grid md:grid-cols-6 md:gap-4 md:items-center relative">
-                    
-                    <div class="mb-3 md:mb-0">
-                        <div class="text-[10px] text-gray-500 md:hidden uppercase font-bold mb-1 tracking-wider">IP Address</div>
-                        <div class="font-mono font-black text-white text-lg md:text-sm md:font-bold">${dev.ip}</div>
+                <div style="border-bottom:1px solid rgba(0,255,209,0.07);padding:14px 16px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px;align-items:center;transition:background .15s;" onmouseover="this.style.background='rgba(0,255,209,0.03)'" onmouseout="this.style.background=''">
+                    <div>
+                        <div style="font-size:.6rem;color:#556677;letter-spacing:.15em;margin-bottom:2px;display:none;" class="mobile-label">IP ADDRESS</div>
+                        <div class="mono neon-cyan" style="font-size:.95rem;font-weight:700;">${dev.ip}</div>
                     </div>
-                    
-                    <div class="mb-3 md:mb-0">
-                        <div class="text-[10px] text-gray-500 md:hidden uppercase font-bold mb-1 tracking-wider">MAC Address</div>
-                        <div class="font-mono text-gray-400 text-sm md:text-sm">${dev.mac}</div>
+                    <div>
+                        <div class="mono" style="font-size:.75rem;color:#667788;">${dev.mac}</div>
                     </div>
-                    
-                    <div class="mb-4 md:mb-0">
-                        <div class="text-[10px] text-gray-500 md:hidden uppercase font-bold mb-1 tracking-wider">Vendor</div>
-                        <div class="text-gray-300 truncate font-medium text-sm md:text-sm" title="${dev.vendor}">${dev.vendor}</div>
+                    <div>
+                        <div style="font-size:.8rem;color:#8899aa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${dev.vendor}">${dev.vendor}</div>
                     </div>
-                    
-                    <div class="mb-5 md:mb-0">
-                        <div class="text-[10px] text-gray-500 md:hidden uppercase font-bold mb-1 tracking-wider">Nickname</div>
-                        <input type="text" id="nick-${dev.mac}" class="bg-gray-900 border border-gray-600 text-white text-base md:text-sm rounded-lg md:rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-3 md:p-1.5" 
-                            placeholder="Nickname..." 
-                            value="${currentNick}" 
+                    <div>
+                        <input type="text" id="nick-${dev.mac}" class="hp-input hp-input-sm"
+                            placeholder="// alias..."
+                            value="${currentNick}"
                             onfocus="focusedInputId = this.id"
                             onblur="focusedInputId = null; pendingNicknames['${dev.mac}'] = undefined; updateNickname('${dev.mac}', this.value)"
                             oninput="pendingNicknames['${dev.mac}'] = this.value">
                     </div>
-                    
-                    <div class="mb-5 md:mb-0 md:align-middle">
-                        <div class="text-[10px] text-gray-500 md:hidden uppercase font-bold mb-1 tracking-wider">Status</div>
-                        ${statusBadge}
-                    </div>
-                    
-                    <div class="flex flex-col md:items-end space-y-3 md:space-y-2 border-t border-gray-700 pt-5 md:border-0 md:pt-0">
-                        <div class="text-[10px] text-gray-500 md:hidden uppercase font-bold w-full text-left tracking-wider">Actions</div>
-                        
-                        <!-- Top row: Cut Connection -->
-                        <button onclick="toggleCut('${dev.ip}')" class="${actionCutColor} text-white font-bold py-3.5 md:py-1.5 px-4 md:px-3 rounded-lg md:rounded w-full md:w-32 transition text-sm md:text-xs shadow-md md:shadow-none">
-                            ${actionCutText}
-                        </button>
-                        
-                        <!-- Middle row: Limit MTU -->
-                        <div class="flex items-center space-x-3 md:space-x-2 w-full md:w-auto">
-                            <input type="number" id="mtu-${dev.ip}" class="bg-gray-900 border border-gray-600 text-white rounded-lg md:rounded-md focus:ring-blue-500 focus:border-blue-500 w-1/3 md:w-16 p-3.5 md:p-1 text-center text-sm md:text-xs" 
-                                placeholder="MTU" value="${currentMtuVal}"
+                    <div>${statusBadge}</div>
+                    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+                        <button onclick="toggleCut('${dev.ip}')" class="${actionCutClass}" style="width:100%;text-align:center;">${actionCutText}</button>
+                        <div style="display:flex;gap:6px;width:100%;">
+                            <input type="number" id="mtu-${dev.ip}" class="hp-input hp-input-sm" style="width:60px;text-align:center;"
+                                value="${currentMtuVal}"
                                 onfocus="focusedInputId = this.id"
                                 onblur="focusedInputId = null"
                                 oninput="pendingMtu['${dev.ip}'] = this.value">
-                            <button onclick="toggleMtu('${dev.ip}', 'mtu-${dev.ip}')" class="${actionMtuColor} font-bold py-3.5 md:py-1.5 px-4 md:px-3 rounded-lg md:rounded transition w-2/3 md:w-24 text-sm md:text-xs shadow-md md:shadow-none">
-                                ${actionMtuText}
-                            </button>
+                            <button onclick="toggleMtu('${dev.ip}', 'mtu-${dev.ip}')" class="${actionMtuClass}" style="flex:1;text-align:center;">${actionMtuText}</button>
                         </div>
-
-                        <!-- Bottom row: Solo Lobby -->
-                        <div class="flex items-center space-x-3 md:space-x-2 w-full md:w-auto">
-                            <input type="number" id="time-${dev.ip}" class="bg-gray-900 border border-gray-600 text-white rounded-lg md:rounded-md focus:ring-blue-500 focus:border-blue-500 w-1/3 md:w-16 p-3.5 md:p-1 text-center text-sm md:text-xs" 
-                                placeholder="ms" value="${currentTime}"
+                        <div style="display:flex;gap:6px;width:100%;">
+                            <input type="number" id="time-${dev.ip}" class="hp-input hp-input-sm" style="width:60px;text-align:center;"
+                                value="${currentTime}"
                                 onfocus="focusedInputId = this.id"
                                 onblur="focusedInputId = null"
                                 oninput="pendingTimes['${dev.ip}'] = this.value">
-                            <button onclick="triggerSoloLobby('${dev.ip}', 'time-${dev.ip}')" ${globalData.solo_lobby_active ? 'disabled' : ''} class="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-3.5 md:py-1.5 px-4 md:px-3 rounded-lg md:rounded transition w-2/3 md:w-24 text-sm md:text-xs shadow-md md:shadow-none">
-                                Solo Lobby
-                            </button>
+                            <button onclick="triggerSoloLobby('${dev.ip}', 'time-${dev.ip}')" ${globalData.solo_lobby_active ? 'disabled' : ''} class="btn btn-blue" style="flex:1;text-align:center;">PROTOCOL</button>
                         </div>
                     </div>
                 </div>`;
             });
-            
+
             // Only update DOM if not currently typing, to prevent stealing focus
             if (focusedInputId) {
                 return;
@@ -664,7 +729,7 @@ def index():
 
 if __name__ == '__main__':
     print("==================================================")
-    print(" NETNEXUS DOCKER SERVER Starting...")
+    print(" HANOI PROTOCOL // NETWORK OPERATIONS")
     print(" Listening on 0.0.0.0:5050")
     print("==================================================")
     app.run(host='0.0.0.0', port=5050, debug=False)
