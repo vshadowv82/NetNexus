@@ -353,20 +353,11 @@ HTML_TEMPLATE = """
                 </tr>`;
             });
             
-            // Only update DOM if not currently typing, to prevent stealing focus (or we restore focus)
+            // Only update DOM if not currently typing, to prevent stealing focus
             if (focusedInputId) {
-                const el = document.getElementById(focusedInputId);
-                const selectionStart = el.selectionStart;
-                const selectionEnd = el.selectionEnd;
-                tbody.innerHTML = html;
-                const newEl = document.getElementById(focusedInputId);
-                if (newEl) {
-                    newEl.focus();
-                    newEl.setSelectionRange(selectionStart, selectionEnd);
-                }
-            } else {
-                tbody.innerHTML = html;
+                return; // Skip redraw until they finish typing
             }
+            tbody.innerHTML = html;
         }
 
         async function triggerScan() {
