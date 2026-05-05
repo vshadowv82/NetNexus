@@ -7,6 +7,14 @@ import json
 import logging
 from scapy.all import ARP, Ether, IP, ICMP, srp, sendp, conf
 from flask import Flask, jsonify, request, render_template_string
+from mac_vendor_lookup import MacLookup, VendorNotFoundError
+
+mac_lookup = MacLookup()
+try:
+    # Attempt to download the latest OUI database in the background
+    threading.Thread(target=mac_lookup.update_vendors, daemon=True).start()
+except Exception as e:
+    print(f"Failed to update mac vendors: {e}")
 
 # Disable Flask startup logging
 log = logging.getLogger('werkzeug')
@@ -90,8 +98,13 @@ def run_arp_scan(subnet):
         found_devices = []
         for s, r in ans:
             mac = r.hwsrc
-            vendor = conf.manufdb._resolve_MAC(mac)
-            if vendor == mac: vendor = "Unknown"
+            vendor = "Unknown"
+            try:
+                vendor = mac_lookup.lookup(mac)
+            except VendorNotFoundError:
+                pass
+            except Exception:
+                pass
             found_devices.append({'ip': r.psrc, 'mac': mac, 'vendor': vendor})
             
         existing_ips = [d['ip'] for d in state["devices"]]
