@@ -659,7 +659,7 @@ HTML_TEMPLATE = """
                                 onfocus="focusedInputId = this.id"
                                 onblur="focusedInputId = null"
                                 oninput="pendingTimes['${dev.ip}'] = this.value">
-                            <button onclick="triggerSoloLobby('${dev.ip}', 'time-${dev.ip}')" ${globalData.solo_lobby_active ? 'disabled' : ''} class="btn btn-blue" style="flex:1;text-align:center;">PROTOCOL</button>
+                            <button onclick="triggerSoloLobby('${dev.ip}', 'time-${dev.ip}')" ${globalData.solo_lobby_active ? 'disabled' : ''} class="btn btn-blue" style="flex:1;text-align:center;">GHOST</button>
                         </div>
                     </div>
                 </div>`;
