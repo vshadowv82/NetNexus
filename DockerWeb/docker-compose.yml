@@ -9,6 +9,4 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    sysctls:
-      - net.ipv4.ip_forward=1
     restart: unless-stopped
