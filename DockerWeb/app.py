@@ -97,13 +97,20 @@ def mtu_limit_mitm_loop(target_ip, gateway_ip, mtu_val, stop_event):
         # Enable IP forwarding so we relay packets as a router
         os.system("sysctl -w net.ipv4.ip_forward=1 > /dev/null 2>&1")
 
-        # --- TCP: MSS Clamping (both directions) ---
+        # Insert rules at the TOP of the FORWARD chain so they evaluate before Docker's chains.
+        # Order matters — insert in reverse so final order is: DROP oversized UDP -> ACCEPT rest.
+
+        # Step 1: ACCEPT all non-oversized traffic (inserted first, will end up at positions 3 & 4)
+        os.system(f"iptables -I FORWARD 1 -d {target_ip} -j ACCEPT")
+        os.system(f"iptables -I FORWARD 1 -s {target_ip} -j ACCEPT")
+
+        # Step 2: DROP oversized UDP (inserted after, will end up at positions 1 & 2)
+        os.system(f"iptables -I FORWARD 1 -d {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
+        os.system(f"iptables -I FORWARD 1 -s {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
+
+        # TCP MSS Clamping (mangle table, direction doesn't interact with FORWARD policy)
         os.system(f"iptables -t mangle -A FORWARD -s {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
         os.system(f"iptables -t mangle -A FORWARD -d {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
-
-        # --- UDP: Drop oversized packets (both directions) ---
-        os.system(f"iptables -A FORWARD -s {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
-        os.system(f"iptables -A FORWARD -d {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
 
         print(f"[+] MTU Limit active for {target_ip}: TCP MSS={mss_val}, UDP drop>{mtu_val}B")
 
@@ -125,6 +132,10 @@ def mtu_limit_mitm_loop(target_ip, gateway_ip, mtu_val, stop_event):
         # --- Remove UDP drop rules ---
         os.system(f"iptables -D FORWARD -s {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
         os.system(f"iptables -D FORWARD -d {target_ip} -p udp -m length --length {udp_drop_threshold}:65535 -j DROP")
+
+        # --- Remove ACCEPT forwarding rules ---
+        os.system(f"iptables -D FORWARD -s {target_ip} -j ACCEPT")
+        os.system(f"iptables -D FORWARD -d {target_ip} -j ACCEPT")
 
         print(f"[-] MTU Limit removed for {target_ip}")
 
