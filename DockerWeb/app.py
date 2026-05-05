@@ -679,7 +679,7 @@ HTML_TEMPLATE = """
                     <div class="action-col" style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
                         <button onclick="toggleCut('${dev.ip}')" class="${actionCutClass}" style="width:100%;text-align:center;">${actionCutText}</button>
                         <div style="display:flex;gap:6px;width:100%;">
-                            <input type="number" id="mtu-${dev.ip}" class="hp-input hp-input-sm" style="width:60px;text-align:center;"
+                            <input type="number" id="mtu-${dev.ip}" class="hp-input hp-input-sm" style="width:80px;text-align:center;"
                                 value="${currentMtuVal}"
                                 onfocus="focusedInputId = this.id"
                                 onblur="focusedInputId = null"
@@ -687,7 +687,7 @@ HTML_TEMPLATE = """
                             <button onclick="toggleMtu('${dev.ip}', 'mtu-${dev.ip}')" class="${actionMtuClass}" style="flex:1;text-align:center;">${actionMtuText}</button>
                         </div>
                         <div style="display:flex;gap:6px;width:100%;">
-                            <input type="number" id="time-${dev.ip}" class="hp-input hp-input-sm" style="width:60px;text-align:center;"
+                            <input type="number" id="time-${dev.ip}" class="hp-input hp-input-sm" style="width:80px;text-align:center;"
                                 value="${currentTime}"
                                 onfocus="focusedInputId = this.id"
                                 onblur="focusedInputId = null"
