@@ -23,7 +23,7 @@ state = {
     "active_attacks": {}, # dict of ip: threading.Event()
     "active_mtu_limits": {}, # dict of ip: {'event': threading.Event(), 'val': int}
     "solo_lobby_active": False,
-    "solo_lobby_timer": 0,
+    "solo_lobby_expires": 0,
     "solo_lobby_target": None,
     "nicknames": {} # dict of mac: str
 }
@@ -157,7 +157,7 @@ def run_arp_scan(subnet):
 def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
     state["solo_lobby_active"] = True
     state["solo_lobby_target"] = target_ip
-    state["solo_lobby_timer"] = float(duration_ms) / 1000.0
+    state["solo_lobby_expires"] = time.time() + (float(duration_ms) / 1000.0)
     try:
         target_mac = get_mac(target_ip)
         gateway_mac = get_mac(gateway_ip)
@@ -166,9 +166,8 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
         stop_event = threading.Event()
         threading.Thread(target=spoof_loop, args=(target_ip, gateway_ip, stop_event), daemon=True).start()
         
-        while state["solo_lobby_timer"] > 0:
-            time.sleep(0.1)
-            state["solo_lobby_timer"] -= 0.1
+        while time.time() < state["solo_lobby_expires"]:
+            time.sleep(0.05)
             
         stop_event.set()
         
@@ -180,7 +179,7 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
         print(f"[!] Timed cut error: {e}")
     finally:
         state["solo_lobby_active"] = False
-        state["solo_lobby_timer"] = 0
+        state["solo_lobby_expires"] = 0
         state["solo_lobby_target"] = None
 
 # --- Web API Endpoints ---
@@ -206,7 +205,7 @@ def api_status():
         "scanning": state["scanning"],
         "devices": devices_enriched,
         "solo_lobby_active": state["solo_lobby_active"],
-        "solo_lobby_timer": max(0, state["solo_lobby_timer"]),
+        "solo_lobby_timer": max(0, state["solo_lobby_expires"] - time.time()) if state["solo_lobby_active"] else 0,
         "solo_lobby_target": state["solo_lobby_target"]
     })
 
@@ -468,6 +467,27 @@ HTML_TEMPLATE = """
         let currentSortCol = 'ip';
         let sortDesc = false;
 
+        // Smooth Timer Update Loop
+        function updateTimers() {
+            document.querySelectorAll('.ghost-timer').forEach(el => {
+                const expire = parseFloat(el.getAttribute('data-expire'));
+                const now = Date.now();
+                const diff = Math.max(0, (expire - now) / 1000);
+                if (diff <= 0) {
+                    el.innerText = "0.000";
+                    // Trigger a status fetch if it just finished to clean up UI
+                    if (!el.getAttribute('data-finished')) {
+                        el.setAttribute('data-finished', 'true');
+                        setTimeout(fetchStatus, 500);
+                    }
+                } else {
+                    el.innerText = diff.toFixed(3);
+                }
+            });
+            requestAnimationFrame(updateTimers);
+        }
+        requestAnimationFrame(updateTimers);
+
         setInterval(() => {
             const now = new Date();
             const el = document.getElementById('hdr-time');
@@ -587,7 +607,8 @@ HTML_TEMPLATE = """
 
                 let statusBadge = '';
                 if (globalData.solo_lobby_active && globalData.solo_lobby_target === dev.ip) {
-                    statusBadge = `<span class="badge badge-cyan">◈ SOLO LOBBY: ${globalData.solo_lobby_timer.toFixed(1)}s</span>`;
+                    const expireAt = Date.now() + (globalData.solo_lobby_timer * 1000);
+                    statusBadge = `<span class="badge badge-cyan">◈ SOLO LOBBY: <span class="ghost-timer mono" data-expire="${expireAt}">${globalData.solo_lobby_timer.toFixed(3)}</span>s</span>`;
                 } else if (is_cut) {
                     statusBadge = '<span class="badge badge-red">✕ OFFLINE</span>';
                 } else {

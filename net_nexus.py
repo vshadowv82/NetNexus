@@ -31,7 +31,7 @@ state = {
     "active_attacks": {}, # dict of ip: threading.Event()
     "active_mtu_limits": {}, # dict of ip: {'event': threading.Event(), 'val': int}
     "solo_lobby_active": False,
-    "solo_lobby_timer": 0,
+    "solo_lobby_expires": 0,
     "nicknames": {} # dict of mac: str
 }
 
@@ -107,7 +107,7 @@ def run_arp_scan(subnet):
 
 def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
     state["solo_lobby_active"] = True
-    state["solo_lobby_timer"] = float(duration_ms) / 1000.0
+    state["solo_lobby_expires"] = time.time() + (float(duration_ms) / 1000.0)
     try:
         target_mac = get_mac(target_ip)
         gateway_mac = get_mac(gateway_ip)
@@ -116,9 +116,8 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
         stop_event = threading.Event()
         threading.Thread(target=spoof_loop, args=(target_ip, gateway_ip, stop_event), daemon=True).start()
         
-        while state["solo_lobby_timer"] > 0:
-            time.sleep(0.1)
-            state["solo_lobby_timer"] -= 0.1
+        while time.time() < state["solo_lobby_expires"]:
+            time.sleep(0.05)
             
         stop_event.set()
         
@@ -130,7 +129,7 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
         print(f"[!] Timed cut error: {e}")
     finally:
         state["solo_lobby_active"] = False
-        state["solo_lobby_timer"] = 0
+        state["solo_lobby_expires"] = 0
 
 # --- GUI Application ---
 class NetNexusApp(ctk.CTk):
@@ -389,7 +388,8 @@ class NetNexusApp(ctk.CTk):
         # Update Banner
         if state["solo_lobby_active"]:
             self.banner_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
-            self.banner_lbl.configure(text=f"Solo Lobby Active: {max(0, state['solo_lobby_timer']):.1f}s")
+            remaining = max(0, state['solo_lobby_expires'] - time.time())
+            self.banner_lbl.configure(text=f"Solo Lobby Active: {remaining:.3f}s")
         else:
             self.banner_frame.grid_forget()
             
@@ -422,7 +422,7 @@ class NetNexusApp(ctk.CTk):
                 status_lbl = self.device_rows[r_idx][3]
                 status_lbl.configure(text=status_text, text_color=status_color)
 
-        self.after(100, self.update_ui)
+        self.after(30, self.update_ui)
 
 if __name__ == "__main__":
     app = NetNexusApp()
