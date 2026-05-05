@@ -555,3 +555,15 @@ HTML_TEMPLATE = """
     </script>
 </body>
 </html>
+"""
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+if __name__ == '__main__':
+    print("==================================================")
+    print(" NETNEXUS DOCKER SERVER Starting...")
+    print(" Listening on 0.0.0.0:5050")
+    print("==================================================")
+    app.run(host='0.0.0.0', port=5050, debug=False)
