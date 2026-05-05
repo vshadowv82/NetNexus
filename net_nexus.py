@@ -181,6 +181,11 @@ class NetNexusApp(ctk.CTk):
         self.scan_btn = ctk.CTkButton(self.header_frame, text="Scan Network", command=self.start_scan)
         self.scan_btn.grid(row=0, column=5, padx=20)
         
+        self.search_var = ctk.StringVar()
+        self.search_entry = ctk.CTkEntry(self.header_frame, textvariable=self.search_var, placeholder_text="Search IP, Mac, Nick...", width=150)
+        self.search_entry.grid(row=0, column=6, padx=5)
+        self.search_var.trace_add("write", lambda *args: self.populate_table())
+        
         # 2. Solo Lobby Banner (Hidden initially)
         self.banner_frame = ctk.CTkFrame(self, fg_color="#7f1d1d", border_width=2, border_color="#ef4444")
         self.banner_lbl = ctk.CTkLabel(self.banner_frame, text="Solo Lobby Active: 12.0s", font=ctk.CTkFont(size=20, weight="bold"), text_color="#fca5a5")
@@ -302,6 +307,18 @@ class NetNexusApp(ctk.CTk):
             self.device_rows.append([lbl])
             return
 
+        # Filter logic
+        search_q = self.search_var.get().lower()
+        filtered_devices = []
+        for dev in state["devices"]:
+            nick = state["nicknames"].get(dev["mac"], "").lower()
+            if not search_q or \
+               search_q in dev["ip"].lower() or \
+               search_q in dev["mac"].lower() or \
+               search_q in dev["vendor"].lower() or \
+               search_q in nick:
+                filtered_devices.append(dev)
+
         # Sorting logic
         def sort_key(dev):
             if self.current_sort_col == "ip":
@@ -312,7 +329,7 @@ class NetNexusApp(ctk.CTk):
                 return dev["ip"] in state["active_attacks"]
             return dev.get(self.current_sort_col, "").lower()
             
-        sorted_devices = sorted(state["devices"], key=sort_key, reverse=self.sort_desc)
+        sorted_devices = sorted(filtered_devices, key=sort_key, reverse=self.sort_desc)
 
         for r_idx, dev in enumerate(sorted_devices, start=1):
             ip_lbl = ctk.CTkLabel(self.table_frame, text=dev["ip"])
@@ -394,7 +411,14 @@ class NetNexusApp(ctk.CTk):
             self.banner_frame.grid_forget()
             
         # Update connection status labels dynamically
-        sorted_devices = sorted(state["devices"], key=lambda d: tuple(int(p) for p in d["ip"].split('.')) if self.current_sort_col == "ip" else d.get(self.current_sort_col, "").lower(), reverse=self.sort_desc)
+        search_q = self.search_var.get().lower()
+        filtered_devices = []
+        for dev in state["devices"]:
+            nick = state["nicknames"].get(dev["mac"], "").lower()
+            if not search_q or search_q in dev["ip"].lower() or search_q in dev["mac"].lower() or search_q in dev["vendor"].lower() or search_q in nick:
+                filtered_devices.append(dev)
+                
+        sorted_devices = sorted(filtered_devices, key=lambda d: tuple(int(p) for p in d["ip"].split('.')) if self.current_sort_col == "ip" else d.get(self.current_sort_col, "").lower(), reverse=self.sort_desc)
         
         for r_idx, dev in enumerate(sorted_devices):
             if r_idx < len(self.device_rows) and len(self.device_rows[r_idx]) == 8:

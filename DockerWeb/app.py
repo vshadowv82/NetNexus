@@ -280,6 +280,10 @@ HTML_TEMPLATE = """
                     <svg id="icon-scan" class="w-5 h-5 md:w-4 md:h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     <span id="text-scan">Scan Network</span>
                 </button>
+                <div class="w-full md:w-auto md:ml-auto">
+                    <label class="block text-xs font-semibold text-gray-400 mb-1 uppercase">Search Devices</label>
+                    <input type="text" id="inp-search" class="bg-gray-900 border border-gray-600 text-white text-sm rounded-lg md:rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-3 md:p-2.5" placeholder="Search IP, Mac, Nick..." oninput="fetchStatus()">
+                </div>
             </div>
 
             <!-- Mobile Sort Dropdown -->
@@ -401,7 +405,20 @@ HTML_TEMPLATE = """
                     });
                 }
 
-                renderTable(sortedDevices, data);
+                // Filter by search
+                const searchQ = document.getElementById('inp-search').value.toLowerCase();
+                let filteredDevices = sortedDevices;
+                if (searchQ) {
+                    filteredDevices = sortedDevices.filter(d => {
+                        const nick = pendingNicknames[d.mac] !== undefined ? pendingNicknames[d.mac] : d.nickname;
+                        return (d.ip && d.ip.toLowerCase().includes(searchQ)) ||
+                               (d.mac && d.mac.toLowerCase().includes(searchQ)) ||
+                               (d.vendor && d.vendor.toLowerCase().includes(searchQ)) ||
+                               (nick && nick.toLowerCase().includes(searchQ));
+                    });
+                }
+
+                renderTable(filteredDevices, data);
 
             } catch (err) {
                 console.error("Failed to fetch status", err);
