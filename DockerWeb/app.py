@@ -3,6 +3,7 @@ import time
 import threading
 import socket
 import sys
+import json
 import logging
 from scapy.all import ARP, Ether, IP, ICMP, srp, sendp, conf
 from flask import Flask, jsonify, request, render_template_string
@@ -27,6 +28,14 @@ state = {
     "solo_lobby_target": None,
     "nicknames": {} # dict of mac: str
 }
+
+NICKNAMES_FILE = 'nicknames.json'
+try:
+    if os.path.exists(NICKNAMES_FILE):
+        with open(NICKNAMES_FILE, 'r') as f:
+            state["nicknames"] = json.load(f)
+except Exception as e:
+    print(f"[!] Failed to load nicknames: {e}")
 
 def get_default_network_info():
     try:
@@ -157,6 +166,11 @@ def api_nickname():
     nickname = request.json.get('nickname', '')
     if mac:
         state["nicknames"][mac] = nickname
+        try:
+            with open(NICKNAMES_FILE, 'w') as f:
+                json.dump(state["nicknames"], f)
+        except Exception as e:
+            print(f"[!] Failed to save nickname: {e}")
     return jsonify({"success": True})
 
 @app.route('/api/scan', methods=['POST'])
@@ -193,7 +207,7 @@ def api_toggle_cut():
 @app.route('/api/toggle_mtu', methods=['POST'])
 def api_toggle_mtu():
     target_ip = request.json.get('ip')
-    mtu_val = request.json.get('mtu', 300)
+    mtu_val = request.json.get('mtu', 800)
     gateway_ip = state["gateway_ip"]
     
     if target_ip == gateway_ip:
@@ -206,7 +220,7 @@ def api_toggle_mtu():
         try:
             mtu_val = int(mtu_val)
         except:
-            mtu_val = 300
+            mtu_val = 800
         stop_event = threading.Event()
         state["active_mtu_limits"][target_ip] = {'event': stop_event, 'val': mtu_val}
         threading.Thread(target=mtu_loop, args=(target_ip, gateway_ip, mtu_val, stop_event), daemon=True).start()
@@ -427,7 +441,7 @@ HTML_TEMPLATE = """
                 const currentTime = pendingTimes[dev.ip] !== undefined ? pendingTimes[dev.ip] : "8000";
                 
                 const isMtuActive = dev.mtu_limit !== null;
-                const currentMtuVal = pendingMtu[dev.ip] !== undefined ? pendingMtu[dev.ip] : (isMtuActive ? dev.mtu_limit : "300");
+                const currentMtuVal = pendingMtu[dev.ip] !== undefined ? pendingMtu[dev.ip] : (isMtuActive ? dev.mtu_limit : "800");
                 const actionMtuColor = isMtuActive ? 'bg-orange-600 hover:bg-orange-500' : 'bg-yellow-600 hover:bg-yellow-500 text-gray-900';
                 const actionMtuText = isMtuActive ? 'Stop MTU' : 'Limit MTU';
 
@@ -531,7 +545,7 @@ HTML_TEMPLATE = """
             await fetch('/api/toggle_mtu', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ip: ip, mtu: parseInt(mtuVal) || 300})
+                body: JSON.stringify({ip: ip, mtu: parseInt(mtuVal) || 800})
             });
             fetchStatus();
         }

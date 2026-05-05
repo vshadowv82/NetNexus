@@ -4,6 +4,7 @@ import threading
 import socket
 import sys
 import ctypes
+import json
 import logging
 from scapy.all import ARP, Ether, IP, ICMP, srp, sendp, conf
 
@@ -40,6 +41,14 @@ state = {
     "solo_lobby_timer": 0,
     "nicknames": {} # dict of mac: str
 }
+
+NICKNAMES_FILE = 'nicknames.json'
+try:
+    if os.path.exists(NICKNAMES_FILE):
+        with open(NICKNAMES_FILE, 'r') as f:
+            state["nicknames"] = json.load(f)
+except Exception as e:
+    print(f"[!] Failed to load nicknames: {e}")
 
 def get_default_network_info():
     try:
@@ -236,6 +245,11 @@ class NetNexusApp(ctk.CTk):
 
     def update_nickname_var(self, mac, str_var):
         state["nicknames"][mac] = str_var.get()
+        try:
+            with open(NICKNAMES_FILE, 'w') as f:
+                json.dump(state["nicknames"], f)
+        except Exception as e:
+            print(f"[!] Failed to save nickname: {e}")
         
     def toggle_cut(self, ip):
         gateway_ip = state["gateway_ip"]
@@ -261,7 +275,7 @@ class NetNexusApp(ctk.CTk):
             try:
                 mtu_val = int(time_var.get())
             except ValueError:
-                mtu_val = 300
+                mtu_val = 800
             stop_event = threading.Event()
             state["active_mtu_limits"][ip] = {'event': stop_event, 'val': mtu_val}
             threading.Thread(target=mtu_loop, args=(ip, gateway_ip, mtu_val, stop_event), daemon=True).start()
@@ -340,7 +354,7 @@ class NetNexusApp(ctk.CTk):
             cut_btn.grid(row=0, column=0, columnspan=2, pady=2, sticky="ew")
             
             # Middle: MTU Limiter
-            mtu_val = state["active_mtu_limits"][dev["ip"]]["val"] if is_mtu else 300
+            mtu_val = state["active_mtu_limits"][dev["ip"]]["val"] if is_mtu else 800
             mtu_var = ctk.StringVar(value=str(mtu_val))
             mtu_entry = ctk.CTkEntry(action_frame, textvariable=mtu_var, width=60)
             mtu_entry.grid(row=1, column=0, padx=2, pady=2, sticky="w")
