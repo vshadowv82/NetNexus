@@ -592,7 +592,7 @@ HTML_TEMPLATE = """
             const tbody = document.getElementById('device-table-body');
             if (devices.length === 0) {
                 if(!document.getElementById('btn-scan').disabled) {
-                    tbody.innerHTML = '<div style="padding:40px;text-align:center;color:#556677;font-family:\'Share Tech Mono\',monospace;font-size:.85rem;">// NO DEVICES FOUND — RETRY SCAN</div>';
+                    tbody.innerHTML = "<div style='padding:40px;text-align:center;color:#556677;font-size:.85rem;'>// NO DEVICES FOUND &mdash; RETRY SCAN</div>";
                 }
                 return;
             }
