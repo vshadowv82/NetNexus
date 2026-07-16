@@ -27,16 +27,26 @@ state = {
     "solo_lobby_active": False,
     "solo_lobby_expires": 0,
     "solo_lobby_target": None,
-    "nicknames": {} # dict of mac: str
+    "nicknames": {}, # dict of mac: str
+    "favorites": {}  # dict of mac: {"ip": str, "mac": str}
 }
 
 NICKNAMES_FILE = 'nicknames.json'
+FAVORITES_FILE = 'favorites.json'
+
 try:
     if os.path.exists(NICKNAMES_FILE):
         with open(NICKNAMES_FILE, 'r') as f:
             state["nicknames"] = json.load(f)
 except Exception as e:
     print(f"[!] Failed to load nicknames: {e}")
+
+try:
+    if os.path.exists(FAVORITES_FILE):
+        with open(FAVORITES_FILE, 'r') as f:
+            state["favorites"] = json.load(f)
+except Exception as e:
+    print(f"[!] Failed to load favorites: {e}")
 
 def get_default_network_info():
     try:
@@ -149,6 +159,12 @@ def run_arp_scan(subnet):
         for s, r in ans:
             if r.psrc != state["gateway_ip"]:
                 found_devices.append({"ip": r.psrc, "mac": r.hwsrc})
+                
+        # Inject favorites
+        found_macs = {d["mac"] for d in found_devices}
+        for mac, dev in state["favorites"].items():
+            if mac not in found_macs:
+                found_devices.append({"ip": dev["ip"], "mac": mac})
         
         state["devices"] = found_devices
     except Exception as e:
@@ -287,6 +303,7 @@ def api_status():
             "ip": d["ip"],
             "mac": d["mac"],
             "nickname": state["nicknames"].get(d["mac"], ""),
+            "is_fav": d["mac"] in state["favorites"],
             "is_cut": d["ip"] in state["active_attacks"],
             "mtu_limit": mtu_limit,
             "is_lagging": is_lagging,
@@ -315,6 +332,22 @@ def api_nickname():
                 json.dump(state["nicknames"], f)
         except Exception as e:
             print(f"[!] Failed to save nickname: {e}")
+    return jsonify({"success": True})
+
+@app.route('/api/toggle_favorite', methods=['POST'])
+def api_toggle_favorite():
+    mac = request.json.get('mac')
+    ip = request.json.get('ip')
+    if mac:
+        if mac in state["favorites"]:
+            del state["favorites"][mac]
+        else:
+            state["favorites"][mac] = {"ip": ip, "mac": mac}
+        try:
+            with open(FAVORITES_FILE, 'w') as f:
+                json.dump(state["favorites"], f)
+        except Exception as e:
+            print(f"[!] Failed to save favorites: {e}")
     return jsonify({"success": True})
 
 @app.route('/api/scan', methods=['POST'])
@@ -540,6 +573,10 @@ HTML_TEMPLATE = """
                     <label class="hp-label">Search Devices</label>
                     <input type="text" id="inp-search" class="hp-input" placeholder="Search IP, MAC, Nickname, Vendor..." oninput="fetchStatus()">
                 </div>
+                <div style="flex:1;min-width:120px;display:flex;align-items:center;gap:8px;padding-bottom:10px;">
+                    <input type="checkbox" id="chk-favorites" onchange="fetchStatus()" style="width:16px;height:16px;accent-color:#00ffd1;cursor:pointer;">
+                    <label class="hp-label" for="chk-favorites" style="margin:0;cursor:pointer;">Favorites Only</label>
+                </div>
                 <button id="btn-scan" onclick="triggerScan()" class="btn btn-cyan" style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
                     <svg id="icon-scan" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                     <span id="text-scan">SCAN NETWORK</span>
@@ -550,6 +587,7 @@ HTML_TEMPLATE = """
             <div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:12px;" id="mobile-sort-bar">
                 <label class="hp-label" style="margin:0;white-space:nowrap;">SORT BY</label>
                 <select id="mobile-sort" onchange="setSort(this.value)" class="hp-input" style="margin:0;">
+                    <option value="is_fav">Favorites</option>
                     <option value="ip">IP Address</option>
                     <option value="mac">MAC Address</option>
                     <option value="nickname">Nickname</option>
@@ -560,7 +598,8 @@ HTML_TEMPLATE = """
             <!-- Device Table -->
             <div class="card" style="overflow:hidden;">
                 <!-- Desktop Header -->
-                <div style="display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid rgba(0,255,209,0.12);background:rgba(0,0,0,0.4);" id="desktop-header">
+                <div style="display:grid;grid-template-columns:50px repeat(5,1fr);border-bottom:1px solid rgba(0,255,209,0.12);background:rgba(0,0,0,0.4);" id="desktop-header">
+                    <div class="sort-th" onclick="setSort('is_fav')">FAV <span id="sort-is_fav"></span></div>
                     <div class="sort-th" onclick="setSort('ip')">IP ADDRESS <span id="sort-ip"></span></div>
                     <div class="sort-th" onclick="setSort('mac')">MAC <span id="sort-mac"></span></div>
                     <div class="sort-th" onclick="setSort('nickname')">NICKNAME <span id="sort-nickname"></span></div>
@@ -624,7 +663,7 @@ HTML_TEMPLATE = """
         }
         
         function updateSortIcons() {
-            const cols = ['ip', 'mac', 'nickname', 'is_cut'];
+            const cols = ['is_fav', 'ip', 'mac', 'nickname', 'is_cut'];
             cols.forEach(c => {
                 const el = document.getElementById('sort-' + c);
                 if (el) {
@@ -693,11 +732,14 @@ HTML_TEMPLATE = """
 
                 // Filter by search
                 const searchQ = document.getElementById('inp-search').value.toLowerCase();
+                const showFavs = document.getElementById('chk-favorites').checked;
                 let filteredDevices = sortedDevices;
-                if (searchQ) {
+                if (searchQ || showFavs) {
                     filteredDevices = sortedDevices.filter(d => {
+                        if (showFavs && !d.is_fav) return false;
                         const nick = pendingNicknames[d.mac] !== undefined ? pendingNicknames[d.mac] : d.nickname;
-                        return (d.ip && d.ip.toLowerCase().includes(searchQ)) ||
+                        return !searchQ || 
+                               (d.ip && d.ip.toLowerCase().includes(searchQ)) ||
                                (d.mac && d.mac.toLowerCase().includes(searchQ)) ||
                                (nick && nick.toLowerCase().includes(searchQ));
                     });
@@ -755,8 +797,14 @@ HTML_TEMPLATE = """
                 const actionLagText = isLagActive ? 'STOP LAG' : 'GLITCH LAG';
                 const actionLagClass = isLagActive ? 'btn btn-cyan' : 'btn btn-red';
 
+                const favText = dev.is_fav ? '★' : '☆';
+                const favColor = dev.is_fav ? '#fbbf24' : 'gray';
+
                 html += `
-                <div class="device-row" style="border-bottom:1px solid rgba(0,255,209,0.07);padding:14px 16px;display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:center;transition:background .15s;" onmouseover="this.style.background='rgba(0,255,209,0.03)'" onmouseout="this.style.background=''">
+                <div class="device-row" style="border-bottom:1px solid rgba(0,255,209,0.07);padding:14px 16px;display:grid;grid-template-columns:50px repeat(5,1fr);gap:12px;align-items:center;transition:background .15s;" onmouseover="this.style.background='rgba(0,255,209,0.03)'" onmouseout="this.style.background=''">
+                    <div style="text-align:center;">
+                        <button onclick="toggleFavorite('${dev.mac}', '${dev.ip}')" style="background:transparent;border:none;color:${favColor};font-size:1.2rem;cursor:pointer;line-height:1;">${favText}</button>
+                    </div>
                     <div>
                         <div class="mobile-label" style="display:none;font-size:.6rem;color:#556677;letter-spacing:.15em;margin-bottom:4px;">IP ADDRESS</div>
                         <div class="mono neon-cyan" style="font-size:.95rem;font-weight:700;">${dev.ip}</div>
@@ -827,6 +875,15 @@ HTML_TEMPLATE = """
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({subnet, gateway})
+            });
+            fetchStatus();
+        }
+
+        async function toggleFavorite(mac, ip) {
+            await fetch('/api/toggle_favorite', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({mac, ip})
             });
             fetchStatus();
         }
