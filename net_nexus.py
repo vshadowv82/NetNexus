@@ -32,16 +32,26 @@ state = {
     "active_mtu_limits": {}, # dict of ip: {'event': threading.Event(), 'val': int}
     "solo_lobby_active": False,
     "solo_lobby_expires": 0,
-    "nicknames": {} # dict of mac: str
+    "nicknames": {}, # dict of mac: str
+    "favorites": {}  # dict of mac: {"ip": str, "mac": str}
 }
 
 NICKNAMES_FILE = 'nicknames.json'
+FAVORITES_FILE = 'favorites.json'
+
 try:
     if os.path.exists(NICKNAMES_FILE):
         with open(NICKNAMES_FILE, 'r') as f:
             state["nicknames"] = json.load(f)
 except Exception as e:
     print(f"[!] Failed to load nicknames: {e}")
+
+try:
+    if os.path.exists(FAVORITES_FILE):
+        with open(FAVORITES_FILE, 'r') as f:
+            state["favorites"] = json.load(f)
+except Exception as e:
+    print(f"[!] Failed to load favorites: {e}")
 
 def get_default_network_info():
     try:
@@ -99,6 +109,12 @@ def run_arp_scan(subnet):
             if r.psrc != state["gateway_ip"]:
                 found_devices.append({"ip": r.psrc, "mac": r.hwsrc})
         
+        # Inject favorites so they are accessible without responding to the scan
+        found_macs = {d["mac"] for d in found_devices}
+        for mac, dev in state["favorites"].items():
+            if mac not in found_macs:
+                found_devices.append({"ip": dev["ip"], "mac": mac})
+                
         state["devices"] = found_devices
     except Exception as e:
         print(f"[!] Scan error: {e}")
@@ -172,6 +188,10 @@ class NetNexusApp(ctk.CTk):
         self.search_entry.grid(row=0, column=6, padx=5)
         self.search_var.trace_add("write", lambda *args: self.populate_table())
         
+        self.show_favorites_var = ctk.BooleanVar(value=False)
+        self.show_favorites_checkbox = ctk.CTkCheckBox(self.header_frame, text="Favorites Only", variable=self.show_favorites_var, command=self.populate_table)
+        self.show_favorites_checkbox.grid(row=0, column=7, padx=5)
+        
         # 2. Solo Lobby Banner (Hidden initially)
         self.banner_frame = ctk.CTkFrame(self, fg_color="#7f1d1d", border_width=2, border_color="#ef4444")
         self.banner_lbl = ctk.CTkLabel(self.banner_frame, text="Solo Lobby Active: 12.0s", font=ctk.CTkFont(size=20, weight="bold"), text_color="#fca5a5")
@@ -183,7 +203,7 @@ class NetNexusApp(ctk.CTk):
         self.table_frame.grid_columnconfigure((0,1,2,3,4,5,6,7), weight=1)
         
         self.header_widgets = {}
-        headers = [("ip", "IP Address"), ("mac", "MAC Address"), ("vendor", "Vendor"), 
+        headers = [("fav", "Fav"), ("ip", "IP Address"), ("mac", "MAC Address"), ("vendor", "Vendor"), 
                    ("nickname", "Nickname"), ("is_cut", "Status"), ("actions", "Actions")]
                    
         for i, (col_id, h) in enumerate(headers):
@@ -215,7 +235,7 @@ class NetNexusApp(ctk.CTk):
         
     def update_sort_icons(self):
         titles = {
-            "ip": "IP Address", "mac": "MAC Address", "vendor": "Vendor", 
+            "fav": "Fav", "ip": "IP Address", "mac": "MAC Address", "vendor": "Vendor", 
             "nickname": "Nickname", "is_cut": "Status"
         }
         for col_id, btn in self.header_widgets.items():
@@ -241,6 +261,20 @@ class NetNexusApp(ctk.CTk):
                 json.dump(state["nicknames"], f)
         except Exception as e:
             print(f"[!] Failed to save nickname: {e}")
+            
+    def toggle_favorite(self, mac, ip):
+        if mac in state["favorites"]:
+            del state["favorites"][mac]
+        else:
+            state["favorites"][mac] = {"ip": ip, "mac": mac}
+            
+        try:
+            with open(FAVORITES_FILE, 'w') as f:
+                json.dump(state["favorites"], f)
+        except Exception as e:
+            print(f"[!] Failed to save favorites: {e}")
+            
+        self.populate_table()
         
     def toggle_cut(self, ip):
         gateway_ip = state["gateway_ip"]
@@ -295,8 +329,11 @@ class NetNexusApp(ctk.CTk):
 
         # Filter logic
         search_q = self.search_var.get().lower()
+        show_favs = self.show_favorites_var.get()
         filtered_devices = []
         for dev in state["devices"]:
+            if show_favs and dev["mac"] not in state["favorites"]:
+                continue
             nick = state["nicknames"].get(dev["mac"], "").lower()
             if not search_q or \
                search_q in dev["ip"].lower() or \
@@ -312,21 +349,30 @@ class NetNexusApp(ctk.CTk):
                 return state["nicknames"].get(dev["mac"], "").lower()
             elif self.current_sort_col == "is_cut":
                 return dev["ip"] in state["active_attacks"]
+            elif self.current_sort_col == "fav":
+                return dev["mac"] in state["favorites"]
             return dev.get(self.current_sort_col, "").lower()
             
         sorted_devices = sorted(filtered_devices, key=sort_key, reverse=self.sort_desc)
 
         for r_idx, dev in enumerate(sorted_devices, start=1):
+            is_fav = dev["mac"] in state["favorites"]
+            fav_text = "★" if is_fav else "☆"
+            fav_color = "#fbbf24" if is_fav else "gray"
+            fav_btn = ctk.CTkButton(self.table_frame, text=fav_text, width=30, fg_color="transparent", text_color=fav_color, hover_color="#374151", font=("Arial", 16),
+                                    command=lambda m=dev["mac"], i=dev["ip"]: self.toggle_favorite(m, i))
+            fav_btn.grid(row=r_idx, column=0, padx=2, pady=5)
+            
             ip_lbl = ctk.CTkLabel(self.table_frame, text=dev["ip"], font=("Share Tech Mono", 13))
-            ip_lbl.grid(row=r_idx, column=0, padx=5, pady=5, sticky="w")
+            ip_lbl.grid(row=r_idx, column=1, padx=5, pady=5, sticky="w")
             
             mac_lbl = ctk.CTkLabel(self.table_frame, text=dev["mac"], font=("Share Tech Mono", 12), text_color="gray")
-            mac_lbl.grid(row=r_idx, column=1, padx=5, pady=5, sticky="w")
+            mac_lbl.grid(row=r_idx, column=2, padx=5, pady=5, sticky="w")
             
             # Nickname Entry
             nick_var = ctk.StringVar(value=state["nicknames"].get(dev["mac"], ""))
             nick_entry = ctk.CTkEntry(self.table_frame, textvariable=nick_var, width=150)
-            nick_entry.grid(row=r_idx, column=2, padx=5, pady=5, sticky="w")
+            nick_entry.grid(row=r_idx, column=3, padx=5, pady=5, sticky="w")
             nick_var.trace_add("write", lambda name, index, mode, m=dev["mac"], v=nick_var: self.update_nickname_var(m, v))
             
             # Status Badge
@@ -339,11 +385,11 @@ class NetNexusApp(ctk.CTk):
                 status_text += f"\nMTU: {state['active_mtu_limits'][dev['ip']]['val']}"
                 
             status_lbl = ctk.CTkLabel(self.table_frame, text=status_text, text_color=status_color, font=("Rajdhani", 12, "bold"))
-            status_lbl.grid(row=r_idx, column=3, padx=5, pady=5, sticky="w")
+            status_lbl.grid(row=r_idx, column=4, padx=5, pady=5, sticky="w")
             
             # Action Frame
             action_frame = ctk.CTkFrame(self.table_frame, fg_color="transparent")
-            action_frame.grid(row=r_idx, column=4, padx=5, pady=5, sticky="w")
+            action_frame.grid(row=r_idx, column=5, padx=5, pady=5, sticky="w")
             
             # Top: Cut Connection
             cut_text = "Restore" if is_cut else "Cut Connection"
@@ -373,7 +419,7 @@ class NetNexusApp(ctk.CTk):
                 command=lambda ip=dev["ip"], tv=time_var: self.trigger_solo_lobby(ip, tv))
             solo_btn.grid(row=2, column=1, padx=2, pady=2, sticky="w")
             
-            self.device_rows.append([ip_lbl, mac_lbl, nick_entry, status_lbl, action_frame, cut_btn, solo_btn])
+            self.device_rows.append([fav_btn, ip_lbl, mac_lbl, nick_entry, status_lbl, action_frame, cut_btn, solo_btn])
 
     def update_ui(self):
         # Update Scan button
@@ -395,17 +441,29 @@ class NetNexusApp(ctk.CTk):
             
         # Update connection status labels dynamically
         search_q = self.search_var.get().lower()
+        show_favs = self.show_favorites_var.get()
         filtered_devices = []
         for dev in state["devices"]:
+            if show_favs and dev["mac"] not in state["favorites"]:
+                continue
             nick = state["nicknames"].get(dev["mac"], "").lower()
             if not search_q or search_q in dev["ip"].lower() or search_q in dev["mac"].lower() or search_q in nick:
                 filtered_devices.append(dev)
                 
-        sorted_devices = sorted(filtered_devices, key=lambda d: tuple(int(p) for p in d["ip"].split('.')) if self.current_sort_col == "ip" else d.get(self.current_sort_col, "").lower(), reverse=self.sort_desc)
+        def sort_key(dev):
+            if self.current_sort_col == "ip":
+                return tuple(int(part) for part in dev["ip"].split('.'))
+            elif self.current_sort_col == "fav":
+                return dev["mac"] in state["favorites"]
+            return dev.get(self.current_sort_col, "").lower()
+                
+        sorted_devices = sorted(filtered_devices, key=sort_key, reverse=self.sort_desc)
         
         for r_idx, dev in enumerate(sorted_devices):
-                if r_idx < len(self.device_rows) and len(self.device_rows[r_idx]) == 7:
-                    solo_btn = self.device_rows[r_idx][6]
+                if r_idx < len(self.device_rows) and len(self.device_rows[r_idx]) == 8:
+                    solo_btn = self.device_rows[r_idx][7]
+                else:
+                    continue
                 if state["solo_lobby_active"]:
                     solo_btn.configure(state="disabled")
                 else:
@@ -419,7 +477,7 @@ class NetNexusApp(ctk.CTk):
                     status_text += f"\nMTU: {state['active_mtu_limits'][dev['ip']]['val']}"
                     
                 status_color = "#ff003c" if is_cut else "#00ffd1"
-                status_lbl = self.device_rows[r_idx][3]
+                status_lbl = self.device_rows[r_idx][4]
                 status_lbl.configure(text=status_text, text_color=status_color)
 
         self.after(30, self.update_ui)
